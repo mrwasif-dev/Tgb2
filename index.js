@@ -20,10 +20,16 @@ function saveUsers() {
 const sessions = {};
 const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
 
-// ===== DATE =====
-function getCurrentDate() {
+// ===== DATE & TIME (Pakistan Time) =====
+function getCurrentDateTime() {
     const d = new Date();
-    return `${String(d.getDate()).padStart(2,'0')}-${String(d.getMonth()+1).padStart(2,'0')}-${d.getFullYear()}`;
+    const utc = d.getTime() + d.getTimezoneOffset() * 60000; // UTC in ms
+    const pakistanTime = new Date(utc + 5 * 60 * 60 * 1000); // UTC+5
+
+    const date = `${String(pakistanTime.getDate()).padStart(2,'0')}-${String(pakistanTime.getMonth()+1).padStart(2,'0')}-${pakistanTime.getFullYear()}`;
+    const time = `${String(pakistanTime.getHours()).padStart(2,'0')}:${String(pakistanTime.getMinutes()).padStart(2,'0')}:${String(pakistanTime.getSeconds()).padStart(2,'0')}`;
+
+    return { date, time };
 }
 
 // ======= Back Button Helper =======
@@ -148,7 +154,7 @@ bot.on('text', async (ctx) => {
                     dob: session.dob,
                     phone: session.phone,
                     password: session.password,
-                    registered: getCurrentDate(),
+                    registered: getCurrentDateTime().date,
                     balance: 0,
                     transactions: []
                 };
@@ -165,9 +171,10 @@ bot.on('text', async (ctx) => {
                 );
 
                 // Admin notification
+                const { date, time } = getCurrentDateTime();
                 const adminMsg = `
 🆕 NEW ACCOUNT
-👤 Name: ${session.firstName} 🎂 DOB: ${session.dob} 📞 Phone: ${session.phone} 👤 Username: ${session.username} 🔑 Password: ${session.password} 📅 Date: ${getCurrentDate()}
+👤 Name: ${session.firstName} 🎂 DOB: ${session.dob} 📞 Phone: ${session.phone} 👤 Username: ${session.username} 🔑 Password: ${session.password} 📅 Date: ${date} Time: ${time}
 📲 Telegram: @${ctx.from.username || 'Not Set'} [https://t.me/${ctx.from.username || 'user?id=' + chatId}]
 `;
                 await bot.telegram.sendMessage(ADMIN_ID, adminMsg);
@@ -201,7 +208,6 @@ bot.on('text', async (ctx) => {
                 sessions[chatId] = { user: session.user, usernameKey: session.usernameKey };
 
                 // Account Verified + Dashboard
-                await ctx.reply('✅ Account Verified');
                 return ctx.reply(
                     `Dear ${session.user.firstName}, Welcome To Paid WhatsApp Bot`,
                     withBackButton([
@@ -224,9 +230,7 @@ bot.action('checkBalance', async (ctx) => {
     if (!session || !session.usernameKey) return ctx.reply('Please login first.');
 
     const user = users[session.usernameKey];
-    const now = new Date();
-    const date = `${String(now.getDate()).padStart(2,'0')}-${String(now.getMonth()+1).padStart(2,'0')}-${now.getFullYear()}`;
-    const time = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+    const { date, time } = getCurrentDateTime();
 
     return ctx.reply(
         `Dear Customer, Your Account Balance Is: ${user.balance || 0} PKR On Account: ${user.firstName} Date: ${date} Time: ${time}`,
@@ -247,11 +251,12 @@ bot.action('depositBalance', async (ctx) => {
     user.balance = (user.balance || 0) + amount;
 
     if (!user.transactions) user.transactions = [];
+    const { date, time } = getCurrentDateTime();
     user.transactions.push({
         type: 'Deposit ➕',
         amount: amount,
-        date: getCurrentDate(),
-        time: new Date().toLocaleTimeString()
+        date,
+        time
     });
 
     saveUsers();
@@ -272,11 +277,12 @@ bot.action('withdrawBalance', async (ctx) => {
     user.balance -= amount;
 
     if (!user.transactions) user.transactions = [];
+    const { date, time } = getCurrentDateTime();
     user.transactions.push({
         type: 'Withdraw ➖',
         amount: amount,
-        date: getCurrentDate(),
-        time: new Date().toLocaleTimeString()
+        date,
+        time
     });
 
     saveUsers();
@@ -297,11 +303,12 @@ bot.action('buyBot', async (ctx) => {
     user.balance -= cost;
 
     if (!user.transactions) user.transactions = [];
+    const { date, time } = getCurrentDateTime();
     user.transactions.push({
         type: 'Buy Bot ➖',
         amount: cost,
-        date: getCurrentDate(),
-        time: new Date().toLocaleTimeString()
+        date,
+        time
     });
 
     saveUsers();
