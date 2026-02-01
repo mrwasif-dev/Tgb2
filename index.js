@@ -159,6 +159,7 @@ bot.on('text', async (ctx) => {
                     registered: getCurrentDateTime().date,
                     balance: 0,
                     transactions: [],
+                    pendingDeposits: [],
                     pendingWithdrawals: []
                 };
                 saveUsers();
@@ -220,6 +221,8 @@ bot.on('text', async (ctx) => {
 
     // ======= DEPOSIT FLOW =======
     if (session.flow === 'deposit') {
+        const user = users[session.usernameKey];
+        
         // Step 1: Enter Amount
         if (session.step === 'enterAmount') {
             const amount = parseInt(text);
@@ -228,57 +231,73 @@ bot.on('text', async (ctx) => {
                 return ctx.reply('❌ Please enter numbers only.');
             }
 
-            if (amount < 100 || amount > 5000) {
-                return ctx.reply('❌ Amount must be between 100 PKR and 5000 PKR.');
+            if (amount < 100) {
+                return ctx.reply('❌ Minimum deposit amount is 100 PKR.');
+            }
+
+            if (amount > 5000) {
+                return ctx.reply('❌ Maximum deposit amount is 5000 PKR per transaction.');
+            }
+
+            // Check daily deposit limit
+            const today = getCurrentDateTime().date;
+            if (!user.dailyDeposits) user.dailyDeposits = { date: today, count: 0, amount: 0 };
+            
+            if (user.dailyDeposits.date !== today) {
+                user.dailyDeposits = { date: today, count: 0, amount: 0 };
+            }
+
+            if (user.dailyDeposits.count >= 5) {
+                return ctx.reply('❌ Daily deposit limit (5 transactions) reached. Try again tomorrow.');
+            }
+
+            if (user.dailyDeposits.amount + amount > 20000) {
+                return ctx.reply(`❌ Daily deposit limit (20,000 PKR) exceeded. You can deposit maximum ${20000 - user.dailyDeposits.amount} PKR today.`);
             }
 
             session.depositAmount = amount;
-            session.step = 'awaitProof';
-
+            session.step = 'enterProof';
+            
             return ctx.reply(
-`📤 Payment of ${amount} PKR is noted for upgrade your funds.
-
-Please send your payment proof Only TiD , TrX ID , Transaction ID (Screenshot ❌)`
+                `✅ Amount ${amount} PKR noted for deposit.\n\n` +
+                `📤 Please enter your Transaction ID/Proof:\n` +
+                `• Only TiD, TrX ID, Transaction ID\n` +
+                `• Screenshots are NOT accepted\n` +
+                `• Example: TXN1234567890`
             );
         }
 
-        // Step 2: Await Proof
-        if (session.step === 'awaitProof') {
-            const user = users[session.usernameKey];
-            const { date, time } = getCurrentDateTime();
+        // Step 2: Enter Proof
+        if (session.step === 'enterProof') {
+            const proofText = text.trim();
+            
+            if (!proofText || proofText.length < 5) {
+                return ctx.reply('❌ Invalid Transaction ID. Please enter a valid Transaction ID (minimum 5 characters).');
+            }
 
-            await ctx.reply('⏳ Please wait, your fund updating in process...', withBackButton([]));
+            if (proofText.length > 100) {
+                return ctx.reply('❌ Transaction ID too long. Maximum 100 characters allowed.');
+            }
 
-            const proofText = ctx.message.text || 'Sent proof';
-            if (!session.pendingDeposits) session.pendingDeposits = [];
-            const depositId = generateDepositId();
+            session.depositProof = proofText;
+            session.step = 'confirmation';
 
-            session.pendingDeposits.push({
-                id: depositId,
-                amount: session.depositAmount,
-                proof: proofText,
-                method: session.depositMethod
-            });
+            const bonus = Math.floor(session.depositAmount * 0.02); // 2% bonus
+            const totalAmount = session.depositAmount + bonus;
 
-            const adminMsg = `
-💰 Deposit Request
-👤 User: ${user.firstName} (Username: ${session.usernameKey})
-💵 Amount: ${session.depositAmount} PKR
-📅 Date: ${date} Time: ${time}
-🖼 Proof: ${proofText}
-`;
-
-            await bot.telegram.sendMessage(
-                ADMIN_ID,
-                adminMsg,
+            return ctx.reply(
+                `📋 Deposit Request Summary:\n\n` +
+                `💰 Amount: ${session.depositAmount} PKR\n` +
+                `🎁 Bonus: ${bonus} PKR (2%)\n` +
+                `💵 Total to be added: ${totalAmount} PKR\n` +
+                `🏦 Method: ${session.depositMethod}\n` +
+                `📝 Transaction ID: ${proofText}\n\n` +
+                `Are you sure you want to proceed?`,
                 Markup.inlineKeyboard([
-                    Markup.button.callback('✅ Approve', `approve_${ctx.chat.id}_${depositId}`),
-                    Markup.button.callback('❌ Reject', `reject_${ctx.chat.id}_${depositId}`)
+                    [Markup.button.callback('✅ Confirm Deposit', 'confirmDeposit')],
+                    [Markup.button.callback('❌ Cancel', 'cancelDeposit')]
                 ])
             );
-
-            session.step = null; // wait for admin
-            return;
         }
     }
 
@@ -373,14 +392,65 @@ bot.action('checkBalance', async (ctx) => {
 
     const user = users[session.usernameKey];
     const { date, time } = getCurrentDateTime();
+    
+    let message = `Dear Customer, Your Account Balance Is: ${user.balance || 0} PKR\n`;
+    message += `On Account: ${user.firstName}\n`;
+    message += `Date: ${date} Time: ${time}\n\n`;
+    
+    // Show daily limits
+    const today = getCurrentDateTime().date;
+    if (user.dailyDeposits && user.dailyDeposits.date === today) {
+        message += `📊 Today's Deposit: ${user.dailyDeposits.amount}/20,000 PKR (${user.dailyDeposits.count}/5 transactions)\n`;
+    }
+    
+    if (user.dailyWithdrawals && user.dailyWithdrawals.date === today) {
+        message += `📊 Today's Withdrawal: ${user.dailyWithdrawals.amount}/15,000 PKR (${user.dailyWithdrawals.count}/3 transactions)\n`;
+    }
 
     return ctx.reply(
-        `Dear Customer, Your Account Balance Is: ${user.balance || 0} PKR On Account: ${user.firstName} Date: ${date} Time: ${time}`,
+        message,
         Markup.inlineKeyboard([
             [Markup.button.callback('📜 View Transaction History', 'viewTransactions')],
+            [Markup.button.callback('📋 Pending Requests', 'viewPendingRequests')],
             [Markup.button.callback('⬅️ Back', 'backToMenu')]
         ])
     );
+});
+
+// --- View Pending Requests
+bot.action('viewPendingRequests', async (ctx) => {
+    const session = sessions[ctx.chat.id];
+    if (!session || !session.usernameKey) return ctx.reply('Please login first.');
+
+    const user = users[session.usernameKey];
+    let message = '⏳ Pending Requests:\n\n';
+    
+    let hasPending = false;
+    
+    if (user.pendingDeposits && user.pendingDeposits.length > 0) {
+        hasPending = true;
+        message += '💰 Pending Deposits:\n';
+        user.pendingDeposits.forEach((d, i) => {
+            message += `${i + 1}. ${d.amount} PKR via ${d.method} - ${d.status || 'Pending'}\n`;
+            message += `   ID: ${d.id}\n`;
+        });
+        message += '\n';
+    }
+    
+    if (user.pendingWithdrawals && user.pendingWithdrawals.length > 0) {
+        hasPending = true;
+        message += '💸 Pending Withdrawals:\n';
+        user.pendingWithdrawals.forEach((w, i) => {
+            message += `${i + 1}. ${w.amount} PKR to ${w.account} - ${w.status || 'Pending'}\n`;
+            message += `   ID: ${w.id}\n`;
+        });
+    }
+    
+    if (!hasPending) {
+        message = '✅ No pending requests.';
+    }
+
+    return ctx.reply(message, withBackButton([]));
 });
 
 // --- Deposit Balance (Select Payment Method)
@@ -415,17 +485,111 @@ bot.action(/deposit(JazzCash|EasyPaisa|UPaisa)/, async (ctx) => {
     const accountType = method === 'UPaisa' ? 'U-Paisa' : method;
 
     await ctx.reply(
-`💰 You selected ${accountType}. Please send payment to:
-
-Account Title: M Hadi
-Account Number: 03000382844
-Account Type: ${accountType}`
+        `💰 You selected ${accountType} for deposit.\n\n` +
+        `📤 Please send payment to:\n\n` +
+        `Account Title: M Hadi\n` +
+        `Account Number: 03000382844\n` +
+        `Account Type: ${accountType}\n\n` +
+        `💵 Enter the amount you are sending (PKR):\n` +
+        `• Minimum: 100 PKR\n` +
+        `• Maximum: 5000 PKR\n` +
+        `• Daily Limit: 20,000 PKR (5 transactions)`
     );
-
-    await ctx.reply('💵 Enter your amount you are sending (PKR):');
 });
 
-// --- Withdraw Balance (NEW IMPLEMENTATION)
+// --- Confirm Deposit
+bot.action('confirmDeposit', async (ctx) => {
+    const chatId = ctx.chat.id;
+    const session = sessions[chatId];
+    if (!session || !session.usernameKey) return ctx.answerCbQuery('Session expired.');
+
+    const user = users[session.usernameKey];
+    const { date, time } = getCurrentDateTime();
+    
+    // Calculate bonus (2%)
+    const bonus = Math.floor(session.depositAmount * 0.02);
+    const totalAmount = session.depositAmount + bonus;
+    
+    // Generate unique deposit ID
+    const depositId = generateDepositId();
+    
+    // Update daily deposit count
+    if (!user.dailyDeposits) user.dailyDeposits = { date: date, count: 0, amount: 0 };
+    user.dailyDeposits.count += 1;
+    user.dailyDeposits.amount += session.depositAmount;
+    
+    // Add to pending deposits
+    if (!user.pendingDeposits) user.pendingDeposits = [];
+    user.pendingDeposits.push({
+        id: depositId,
+        amount: session.depositAmount,
+        bonus: bonus,
+        totalAmount: totalAmount,
+        method: session.depositMethod,
+        proof: session.depositProof,
+        date: date,
+        time: time,
+        status: 'pending'
+    });
+    
+    saveUsers();
+    
+    // Send notification to admin
+    const adminMsg = `
+💰 DEPOSIT REQUEST
+👤 User: ${user.firstName} (${session.usernameKey})
+💵 Amount: ${session.depositAmount} PKR
+🎁 Bonus: ${bonus} PKR (2%)
+💰 Total: ${totalAmount} PKR
+🏦 Method: ${session.depositMethod}
+📝 Transaction ID: ${session.depositProof}
+📅 Date: ${date} ⏰ Time: ${time}
+📱 User Phone: ${user.phone}
+📊 Daily: ${user.dailyDeposits.count}/5 deposits (${user.dailyDeposits.amount}/20,000 PKR)
+    `;
+    
+    await bot.telegram.sendMessage(
+        ADMIN_ID,
+        adminMsg,
+        Markup.inlineKeyboard([
+            [Markup.button.callback('✅ Approve Deposit', `admin_approve_deposit_${chatId}_${depositId}`)],
+            [Markup.button.callback('❌ Reject', `admin_reject_deposit_${chatId}_${depositId}`)]
+        ])
+    );
+    
+    // Notify user
+    await ctx.reply(
+        `⏳ Deposit request submitted!\n\n` +
+        `📋 Details:\n` +
+        `• Amount: ${session.depositAmount} PKR\n` +
+        `• Bonus: ${bonus} PKR\n` +
+        `• Total to be added: ${totalAmount} PKR\n` +
+        `• Method: ${session.depositMethod}\n` +
+        `• Transaction ID: ${session.depositProof}\n` +
+        `• Status: Pending Admin Approval\n\n` +
+        `Request ID: ${depositId}\n` +
+        `You will be notified once processed.`,
+        withBackButton([])
+    );
+    
+    // Reset session
+    sessions[chatId].flow = null;
+    sessions[chatId].step = null;
+    delete session.depositAmount;
+    delete session.depositMethod;
+    delete session.depositProof;
+});
+
+// --- Cancel Deposit
+bot.action('cancelDeposit', async (ctx) => {
+    const session = sessions[ctx.chat.id];
+    sessions[ctx.chat.id].flow = null;
+    sessions[ctx.chat.id].step = null;
+    
+    await ctx.reply('❌ Deposit request cancelled.', withBackButton([]));
+});
+
+// --- Withdraw Balance
 bot.action('withdrawBalance', async (ctx) => {
     const session = sessions[ctx.chat.id];
     if (!session || !session.usernameKey) return ctx.reply('Please login first.');
@@ -445,7 +609,7 @@ bot.action('withdrawBalance', async (ctx) => {
         `💵 Enter amount to withdraw:\n` +
         `• Minimum: 200 PKR\n` +
         `• Maximum: 5000 PKR\n` +
-        `• Daily Limit: 3 transactions`,
+        `• Daily Limit: 3 transactions (15,000 PKR)`,
         withBackButton([])
     );
 });
@@ -518,15 +682,16 @@ bot.action('confirmWithdraw', async (ctx) => {
 📱 Account: ${session.withdrawAccount}
 📅 Date: ${date} ⏰ Time: ${time}
 💳 Balance: ${user.balance} PKR
-📊 Daily: ${user.dailyWithdrawals.count}/3 withdrawals
+📱 User Phone: ${user.phone}
+📊 Daily: ${user.dailyWithdrawals.count}/3 withdrawals (${user.dailyWithdrawals.amount}/15,000 PKR)
     `;
     
     await bot.telegram.sendMessage(
         ADMIN_ID,
         adminMsg,
         Markup.inlineKeyboard([
-            [Markup.button.callback('✅ Approve & Send', `admin_approve_${chatId}_${withdrawId}`)],
-            [Markup.button.callback('❌ Reject', `admin_reject_${chatId}_${withdrawId}`)]
+            [Markup.button.callback('✅ Approve & Send', `admin_approve_withdraw_${chatId}_${withdrawId}`)],
+            [Markup.button.callback('❌ Reject', `admin_reject_withdraw_${chatId}_${withdrawId}`)]
         ])
     );
     
@@ -591,15 +756,11 @@ bot.action('viewTransactions', async (ctx) => {
     let historyMsg = '📜 Transaction History:\n\n';
     user.transactions.forEach((t, i) => {
         historyMsg += `${i + 1}. ${t.type}: ${t.amount} PKR on ${t.date} at ${t.time}\n`;
+        if (t.bonus) historyMsg += `   Bonus: +${t.bonus} PKR\n`;
+        if (t.fee) historyMsg += `   Fee: -${t.fee} PKR\n`;
+        if (t.netAmount) historyMsg += `   Net: ${t.netAmount} PKR\n`;
+        if (t.status) historyMsg += `   Status: ${t.status}\n`;
     });
-
-    // Show pending withdrawals if any
-    if (user.pendingWithdrawals && user.pendingWithdrawals.length > 0) {
-        historyMsg += '\n⏳ Pending Withdrawals:\n';
-        user.pendingWithdrawals.forEach((w, i) => {
-            historyMsg += `${i + 1}. ${w.amount} PKR to ${w.account} (${w.method}) - ${w.status}\n`;
-        });
-    }
 
     return ctx.reply(historyMsg, withBackButton([]));
 });
@@ -637,54 +798,113 @@ bot.action('backToMenu', async (ctx) => {
 });
 
 // ======= ADMIN APPROVAL FOR DEPOSITS =======
-bot.action(/approve_(\d+)_(dep_\d+_\d+)/, async (ctx) => {
+bot.action(/admin_approve_deposit_(\d+)_(dep_\d+_\d+)/, async (ctx) => {
     const [_, userChatId, depositId] = ctx.match;
     const session = sessions[userChatId];
-    if (!session || !session.pendingDeposits) return ctx.answerCbQuery('No pending deposit.');
-
-    const deposit = session.pendingDeposits.find(d => d.id === depositId);
-    if (!deposit) return ctx.answerCbQuery('Deposit already processed.');
+    if (!session || !session.usernameKey) return ctx.answerCbQuery('User not found.');
 
     const user = users[session.usernameKey];
+    if (!user.pendingDeposits) return ctx.answerCbQuery('No pending deposits.');
+
+    const depositIndex = user.pendingDeposits.findIndex(d => d.id === depositId);
+    if (depositIndex === -1) return ctx.answerCbQuery('Deposit already processed.');
+
+    const deposit = user.pendingDeposits[depositIndex];
     const { date, time } = getCurrentDateTime();
 
-    user.balance = (user.balance || 0) + deposit.amount;
+    // Add balance with bonus
+    user.balance += deposit.totalAmount;
+    
+    // Add to transaction history
     if (!user.transactions) user.transactions = [];
     user.transactions.push({
-        type: `Deposit ➕ (${deposit.method || 'N/A'})`,
+        type: `Deposit ➕ (${deposit.method})`,
         amount: deposit.amount,
-        date,
-        time,
-        proof: deposit.proof
+        bonus: deposit.bonus,
+        totalAmount: deposit.totalAmount,
+        date: date,
+        time: time,
+        proof: deposit.proof,
+        status: 'approved'
     });
+
     saveUsers();
 
-    await bot.telegram.sendMessage(userChatId, `✅ Your fund of ${deposit.amount} PKR has been approved!`, withBackButton([]));
+    // Notify user
+    await bot.telegram.sendMessage(
+        userChatId,
+        `✅ Deposit Approved!\n\n` +
+        `💰 Amount: ${deposit.amount} PKR\n` +
+        `🎁 Bonus: ${deposit.bonus} PKR\n` +
+        `💵 Total Added: ${deposit.totalAmount} PKR\n` +
+        `🏦 Method: ${deposit.method}\n` +
+        `📝 Transaction ID: ${deposit.proof}\n` +
+        `📅 Date: ${date} at ${time}\n\n` +
+        `New Balance: ${user.balance} PKR`,
+        withBackButton([])
+    );
 
-    // remove processed deposit
-    session.pendingDeposits = session.pendingDeposits.filter(d => d.id !== depositId);
+    // Remove from pending
+    user.pendingDeposits.splice(depositIndex, 1);
+    saveUsers();
 
-    await ctx.editMessageText('✅ Deposit Approved ✅');
+    await ctx.editMessageText(`✅ Deposit Approved\n\nUser: ${user.firstName}\nAmount: ${deposit.totalAmount} PKR added (${deposit.amount} + ${deposit.bonus} bonus)`);
 });
 
-bot.action(/reject_(\d+)_(dep_\d+_\d+)/, async (ctx) => {
+bot.action(/admin_reject_deposit_(\d+)_(dep_\d+_\d+)/, async (ctx) => {
     const [_, userChatId, depositId] = ctx.match;
     const session = sessions[userChatId];
-    if (!session || !session.pendingDeposits) return ctx.answerCbQuery('No pending deposit.');
+    if (!session || !session.usernameKey) return ctx.answerCbQuery('User not found.');
 
-    const deposit = session.pendingDeposits.find(d => d.id === depositId);
-    if (!deposit) return ctx.answerCbQuery('Deposit already processed.');
+    const user = users[session.usernameKey];
+    if (!user.pendingDeposits) return ctx.answerCbQuery('No pending deposits.');
 
-    await bot.telegram.sendMessage(userChatId, `❌ Your deposit of ${deposit.amount} PKR has been rejected.`, withBackButton([]));
+    const depositIndex = user.pendingDeposits.findIndex(d => d.id === depositId);
+    if (depositIndex === -1) return ctx.answerCbQuery('Deposit already processed.');
 
-    // remove processed deposit
-    session.pendingDeposits = session.pendingDeposits.filter(d => d.id !== depositId);
+    const deposit = user.pendingDeposits[depositIndex];
+    const { date, time } = getCurrentDateTime();
 
-    await ctx.editMessageText('❌ Deposit Rejected ❌');
+    // Update daily deposit count
+    if (user.dailyDeposits) {
+        user.dailyDeposits.count = Math.max(0, user.dailyDeposits.count - 1);
+        user.dailyDeposits.amount = Math.max(0, user.dailyDeposits.amount - deposit.amount);
+    }
+
+    // Add to transaction history
+    if (!user.transactions) user.transactions = [];
+    user.transactions.push({
+        type: `Deposit ❌ (Rejected)`,
+        amount: deposit.amount,
+        date: date,
+        time: time,
+        proof: deposit.proof,
+        status: 'rejected',
+        reason: 'Admin rejected'
+    });
+
+    // Notify user
+    await bot.telegram.sendMessage(
+        userChatId,
+        `❌ Deposit Rejected!\n\n` +
+        `💰 Amount: ${deposit.amount} PKR\n` +
+        `🏦 Method: ${deposit.method}\n` +
+        `📝 Transaction ID: ${deposit.proof}\n` +
+        `📅 Date: ${date} at ${time}\n\n` +
+        `Reason: Admin rejected your deposit request.\n` +
+        `Contact admin for more information.`,
+        withBackButton([])
+    );
+
+    // Remove from pending
+    user.pendingDeposits.splice(depositIndex, 1);
+    saveUsers();
+
+    await ctx.editMessageText(`❌ Deposit Rejected\n\nUser: ${user.firstName}\nAmount: ${deposit.amount} PKR`);
 });
 
 // ======= ADMIN APPROVAL FOR WITHDRAWALS =======
-bot.action(/admin_approve_(\d+)_(wd_\d+_\d+)/, async (ctx) => {
+bot.action(/admin_approve_withdraw_(\d+)_(wd_\d+_\d+)/, async (ctx) => {
     const [_, userChatId, withdrawId] = ctx.match;
     const session = sessions[userChatId];
     if (!session || !session.usernameKey) return ctx.answerCbQuery('User not found.');
@@ -735,10 +955,10 @@ bot.action(/admin_approve_(\d+)_(wd_\d+_\d+)/, async (ctx) => {
     user.pendingWithdrawals.splice(withdrawIndex, 1);
     saveUsers();
 
-    await ctx.editMessageText(`✅ Withdrawal Approved & Amount Sent\n\nUser: ${user.firstName}\nAmount: ${withdraw.netAmount} PKR`);
+    await ctx.editMessageText(`✅ Withdrawal Approved & Amount Sent\n\nUser: ${user.firstName}\nAmount: ${withdraw.netAmount} PKR sent to ${withdraw.account}`);
 });
 
-bot.action(/admin_reject_(\d+)_(wd_\d+_\d+)/, async (ctx) => {
+bot.action(/admin_reject_withdraw_(\d+)_(wd_\d+_\d+)/, async (ctx) => {
     const [_, userChatId, withdrawId] = ctx.match;
     const session = sessions[userChatId];
     if (!session || !session.usernameKey) return ctx.answerCbQuery('User not found.');
