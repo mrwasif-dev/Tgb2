@@ -220,6 +220,34 @@ bot.on('text', async (ctx) => {
                 );
         }
     }
+
+    // ===== DEPOSIT AMOUNT =====
+    if (session.flow === 'deposit' && session.step === 'enterAmount') {
+        const amount = parseInt(text);
+        if (isNaN(amount) || amount <= 0) {
+            return ctx.reply('❌ Invalid amount. Enter a valid number:');
+        }
+
+        const user = users[session.usernameKey];
+        user.balance = (user.balance || 0) + amount;
+        if (!user.transactions) user.transactions = [];
+        const { date, time } = getCurrentDateTime();
+        user.transactions.push({
+            type: `Deposit ➕ (${session.depositMethod})`,
+            amount,
+            date,
+            time
+        });
+
+        saveUsers();
+
+        // Reset deposit session
+        session.flow = null;
+        session.step = null;
+        session.depositMethod = null;
+
+        return ctx.reply(`✅ ${amount} PKR deposited successfully!`, withBackButton([]));
+    }
 });
 
 // ===== BUTTON ACTIONS =====
@@ -241,26 +269,36 @@ bot.action('checkBalance', async (ctx) => {
     );
 });
 
-// --- Deposit Balance
+// --- Deposit Balance (Select Payment Method)
 bot.action('depositBalance', async (ctx) => {
     const session = sessions[ctx.chat.id];
     if (!session || !session.usernameKey) return ctx.reply('Please login first.');
 
-    const user = users[session.usernameKey];
-    const amount = 500; // example deposit
-    user.balance = (user.balance || 0) + amount;
+    sessions[ctx.chat.id].flow = 'deposit';
+    sessions[ctx.chat.id].step = 'selectMethod';
 
-    if (!user.transactions) user.transactions = [];
-    const { date, time } = getCurrentDateTime();
-    user.transactions.push({
-        type: 'Deposit ➕',
-        amount: amount,
-        date,
-        time
-    });
+    await ctx.reply(
+        'Select Your Payment Deposit Method:',
+        Markup.inlineKeyboard([
+            [Markup.button.callback('💵 Cash', 'depositCash')],
+            [Markup.button.callback('✈️ JazzCash', 'depositJazzCash')],
+            [Markup.button.callback('🏦 EasyPaisa', 'depositEasyPaisa')],
+            [Markup.button.callback('💳 U-Paisa', 'depositUPaisa')],
+            [Markup.button.callback('⬅️ Back', 'backToMenu')]
+        ])
+    );
+});
 
-    saveUsers();
-    return ctx.reply(`✅ ${amount} PKR Deposited Successfully`, withBackButton([]));
+// ===== Deposit Payment Method Selected =====
+bot.action(/deposit(Cash|JazzCash|EasyPaisa|UPaisa)/, async (ctx) => {
+    const session = sessions[ctx.chat.id];
+    if (!session || !session.usernameKey) return ctx.reply('Please login first.');
+
+    const method = ctx.match[1]; // Cash, JazzCash, EasyPaisa, UPaisa
+    session.depositMethod = method;
+    session.step = 'enterAmount';
+
+    await ctx.reply(`💰 You selected ${method}. Enter the amount to deposit (PKR):`);
 });
 
 // --- Withdraw Balance
