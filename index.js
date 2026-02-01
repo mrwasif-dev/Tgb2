@@ -40,6 +40,11 @@ function withBackButton(buttons = []) {
     ]);
 }
 
+// ======= Generate Unique Deposit ID =======
+function generateDepositId() {
+    return 'dep_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+}
+
 // ======= START =======
 bot.start(async (ctx) => {
     const chatId = ctx.chat.id;
@@ -208,7 +213,7 @@ bot.on('text', async (ctx) => {
         return;
     }
 
-    // ===== DEPOSIT FLOW =====
+    // ======= DEPOSIT FLOW =======
     if (session.flow === 'deposit') {
         // Step 1: Enter Amount
         if (session.step === 'enterAmount') {
@@ -219,7 +224,7 @@ bot.on('text', async (ctx) => {
             session.step = 'awaitProof';
             return ctx.reply(
 `📤 Payment of ${amount} PKR is noted.
-Please send your payment proof (screenshot or message). You can type anything or send an image.`
+Please send your payment proof (screenshot or message).`
             );
         }
 
@@ -228,23 +233,38 @@ Please send your payment proof (screenshot or message). You can type anything or
             const user = users[session.usernameKey];
             const { date, time } = getCurrentDateTime();
 
-            user.balance = (user.balance || 0) + session.depositAmount;
-            if (!user.transactions) user.transactions = [];
-            user.transactions.push({
-                type: `Deposit ➕ (${session.depositMethod})`,
+            await ctx.reply('⏳ Please wait, your fund updating in process...', withBackButton([]));
+
+            const proofText = ctx.message.text || 'Sent proof';
+            if (!session.pendingDeposits) session.pendingDeposits = [];
+            const depositId = generateDepositId();
+
+            session.pendingDeposits.push({
+                id: depositId,
                 amount: session.depositAmount,
-                date,
-                time,
-                proof: ctx.message.text || 'Sent proof'
+                proof: proofText,
+                method: session.depositMethod
             });
-            saveUsers();
 
-            session.flow = null;
-            session.step = null;
-            session.depositAmount = null;
-            session.depositMethod = null;
+            const adminMsg = `
+💰 Deposit Request
+👤 User: ${user.firstName} (Username: ${session.usernameKey})
+💵 Amount: ${session.depositAmount} PKR
+📅 Date: ${date} Time: ${time}
+🖼 Proof: ${proofText}
+`;
 
-            return ctx.reply(`✅ ${user.balance} PKR added successfully! Your new balance is ${user.balance} PKR.`, withBackButton([]));
+            await bot.telegram.sendMessage(
+                ADMIN_ID,
+                adminMsg,
+                Markup.inlineKeyboard([
+                    Markup.button.callback('✅ Approve', `approve_${ctx.chat.id}_${depositId}`),
+                    Markup.button.callback('❌ Reject', `reject_${ctx.chat.id}_${depositId}`)
+                ])
+            );
+
+            session.step = null; // wait for admin
+            return;
         }
     }
 });
@@ -368,7 +388,7 @@ bot.action('logOut', async (ctx) => {
     return ctx.reply('🔓 You have been logged out.', withBackButton([]));
 });
 
-// ===== BACK BUTTON =====
+// ======= BACK BUTTON =====
 bot.action('backToMenu', async (ctx) => {
     const session = sessions[ctx.chat.id];
     if (!session || !session.usernameKey) {
@@ -392,6 +412,53 @@ bot.action('backToMenu', async (ctx) => {
             ])
         );
     }
+});
+
+// ======= ADMIN APPROVAL =======
+bot.action(/approve_(\d+)_(dep_\d+_\d+)/, async (ctx) => {
+    const [_, userChatId, depositId] = ctx.match;
+    const session = sessions[userChatId];
+    if (!session || !session.pendingDeposits) return ctx.answerCbQuery('No pending deposit.');
+
+    const deposit = session.pendingDeposits.find(d => d.id === depositId);
+    if (!deposit) return ctx.answerCbQuery('Deposit already processed.');
+
+    const user = users[session.usernameKey];
+    const { date, time } = getCurrentDateTime();
+
+    user.balance = (user.balance || 0) + deposit.amount;
+    if (!user.transactions) user.transactions = [];
+    user.transactions.push({
+        type: `Deposit ➕ (${deposit.method || 'N/A'})`,
+        amount: deposit.amount,
+        date,
+        time,
+        proof: deposit.proof
+    });
+    saveUsers();
+
+    await bot.telegram.sendMessage(userChatId, `✅ Your fund of ${deposit.amount} PKR has been approved!`, withBackButton([]));
+
+    // remove processed deposit
+    session.pendingDeposits = session.pendingDeposits.filter(d => d.id !== depositId);
+
+    await ctx.editMessageText('✅ Deposit Approved ✅');
+});
+
+bot.action(/reject_(\d+)_(dep_\d+_\d+)/, async (ctx) => {
+    const [_, userChatId, depositId] = ctx.match;
+    const session = sessions[userChatId];
+    if (!session || !session.pendingDeposits) return ctx.answerCbQuery('No pending deposit.');
+
+    const deposit = session.pendingDeposits.find(d => d.id === depositId);
+    if (!deposit) return ctx.answerCbQuery('Deposit already processed.');
+
+    await bot.telegram.sendMessage(userChatId, `❌ Your deposit of ${deposit.amount} PKR has been rejected.`, withBackButton([]));
+
+    // remove processed deposit
+    session.pendingDeposits = session.pendingDeposits.filter(d => d.id !== depositId);
+
+    await ctx.editMessageText('❌ Deposit Rejected ❌');
 });
 
 // ===== LAUNCH =====
