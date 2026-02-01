@@ -47,14 +47,45 @@ async function deleteMessage(ctx, messageId = null) {
     }
 }
 
+// Store last bot messages for each user
+const lastBotMessages = {};
+
+// Function to clean up old bot messages
+async function cleanupOldMessages(ctx, userId) {
+    if (lastBotMessages[userId]) {
+        for (const msgId of lastBotMessages[userId]) {
+            try {
+                await ctx.deleteMessage(msgId);
+            } catch (error) {
+                console.log('Error deleting old message:', error.message);
+            }
+        }
+    }
+    lastBotMessages[userId] = [];
+}
+
+// Function to track new bot message
+function trackBotMessage(userId, messageId) {
+    if (!lastBotMessages[userId]) {
+        lastBotMessages[userId] = [];
+    }
+    lastBotMessages[userId].push(messageId);
+    
+    // Keep only last 5 messages
+    if (lastBotMessages[userId].length > 5) {
+        lastBotMessages[userId].shift();
+    }
+}
+
 // ===== START COMMAND =====
 bot.start(async (ctx) => {
     const userId = ctx.from.id;
     
-    // Delete the user's /start message if exists
-    if (ctx.message) {
-        await deleteMessage(ctx, ctx.message.message_id);
-    }
+    // Delete the user's /start message
+    await deleteMessage(ctx);
+    
+    // Clean up old bot messages
+    await cleanupOldMessages(ctx, userId);
 
     if (users[userId]) {
         if (users[userId].role === 'admin') {
@@ -75,7 +106,7 @@ bot.start(async (ctx) => {
                     ])
                 }
             );
-            sessions[userId] = { lastBotMessage: msg.message_id };
+            trackBotMessage(userId, msg.message_id);
         } else if (users[userId].role === 'user') {
             const msg = await ctx.reply(
                 `Welcome back, ${ctx.from.first_name}!\n\n` +
@@ -90,7 +121,7 @@ bot.start(async (ctx) => {
                     ])
                 }
             );
-            sessions[userId] = { lastBotMessage: msg.message_id };
+            trackBotMessage(userId, msg.message_id);
         }
     } else {
         const msg = await ctx.reply(
@@ -104,7 +135,7 @@ bot.start(async (ctx) => {
                 ])
             }
         );
-        sessions[userId] = { lastBotMessage: msg.message_id };
+        trackBotMessage(userId, msg.message_id);
     }
 });
 
@@ -112,10 +143,8 @@ bot.start(async (ctx) => {
 bot.action('register', async (ctx) => {
     const userId = ctx.from.id;
     
-    // Delete previous bot message
-    if (sessions[userId]?.lastBotMessage) {
-        await deleteMessage(ctx, sessions[userId].lastBotMessage);
-    }
+    // Clean up old messages
+    await cleanupOldMessages(ctx, userId);
     
     // Delete callback query message
     await deleteMessage(ctx);
@@ -127,13 +156,12 @@ bot.action('register', async (ctx) => {
                 [Markup.button.callback('🔙 Back to Main', 'back_to_main')]
             ])
         );
-        sessions[userId].lastBotMessage = msg.message_id;
+        trackBotMessage(userId, msg.message_id);
         return;
     }
 
     sessions[userId] = {
-        step: 'awaiting_password',
-        lastBotMessage: null
+        step: 'awaiting_password'
     };
 
     const msg = await ctx.reply(
@@ -147,7 +175,7 @@ bot.action('register', async (ctx) => {
         { parse_mode: 'Markdown' }
     );
     
-    sessions[userId].lastBotMessage = msg.message_id;
+    trackBotMessage(userId, msg.message_id);
 });
 
 // Handle password input
@@ -158,14 +186,10 @@ bot.on('text', async (ctx) => {
     if (!session) return;
     
     // Delete user's text message
-    if (ctx.message) {
-        await deleteMessage(ctx, ctx.message.message_id);
-    }
+    await deleteMessage(ctx);
     
-    // Delete previous bot message
-    if (session.lastBotMessage) {
-        await deleteMessage(ctx, session.lastBotMessage);
-    }
+    // Clean up old bot messages
+    await cleanupOldMessages(ctx, userId);
 
     if (session.step === 'awaiting_password') {
         const password = ctx.message.text;
@@ -181,7 +205,7 @@ bot.on('text', async (ctx) => {
                 'Type your password again:',
                 { parse_mode: 'Markdown' }
             );
-            session.lastBotMessage = msg.message_id;
+            trackBotMessage(userId, msg.message_id);
             return;
         }
 
@@ -193,7 +217,7 @@ bot.on('text', async (ctx) => {
             'Now, please enter your full name:',
             { parse_mode: 'Markdown' }
         );
-        session.lastBotMessage = msg.message_id;
+        trackBotMessage(userId, msg.message_id);
         
     } else if (session.step === 'awaiting_name') {
         const name = ctx.message.text.trim();
@@ -204,7 +228,7 @@ bot.on('text', async (ctx) => {
                 'Please enter your full name again:',
                 { parse_mode: 'Markdown' }
             );
-            session.lastBotMessage = msg.message_id;
+            trackBotMessage(userId, msg.message_id);
             return;
         }
 
@@ -216,7 +240,7 @@ bot.on('text', async (ctx) => {
             'Now, please send your phone number (with country code, e.g., +1234567890):',
             { parse_mode: 'Markdown' }
         );
-        session.lastBotMessage = msg.message_id;
+        trackBotMessage(userId, msg.message_id);
         
     } else if (session.step === 'awaiting_phone') {
         const phone = ctx.message.text.trim();
@@ -228,7 +252,7 @@ bot.on('text', async (ctx) => {
                 'Please send a valid phone number (with country code, e.g., +1234567890):',
                 { parse_mode: 'Markdown' }
             );
-            session.lastBotMessage = msg.message_id;
+            trackBotMessage(userId, msg.message_id);
             return;
         }
 
@@ -243,6 +267,9 @@ bot.on('text', async (ctx) => {
             registrationTime: getCurrentDateTime().time
         };
         saveUsers();
+        
+        // Clean up before sending final messages
+        await cleanupOldMessages(ctx, userId);
         
         // Send confirmation to user
         const userMsg = await ctx.reply(
@@ -260,9 +287,10 @@ bot.on('text', async (ctx) => {
                 ])
             }
         );
+        trackBotMessage(userId, userMsg.message_id);
         
-        // Send notification to admin
-        await bot.telegram.sendMessage(
+        // Send two notification messages to admin
+        const adminMsg1 = await bot.telegram.sendMessage(
             ADMIN_ID,
             `🆕 *New Registration Request!*\n\n` +
             `👤 Name: ${session.name}\n` +
@@ -280,8 +308,8 @@ bot.on('text', async (ctx) => {
             }
         );
 
-        // Send second message to admin about pending count
-        await bot.telegram.sendMessage(
+        // Second message to admin
+        const adminMsg2 = await bot.telegram.sendMessage(
             ADMIN_ID,
             `📊 *Pending Requests*\n\n` +
             `You have new pending registration requests. Total pending: ${Object.values(users).filter(u => u.role === 'user' && !u.approved).length}`,
@@ -293,8 +321,13 @@ bot.on('text', async (ctx) => {
             }
         );
 
+        // Track both admin messages for cleanup
+        if (!lastBotMessages[ADMIN_ID]) {
+            lastBotMessages[ADMIN_ID] = [];
+        }
+        lastBotMessages[ADMIN_ID].push(adminMsg1.message_id, adminMsg2.message_id);
+
         delete sessions[userId];
-        sessions[userId] = { lastBotMessage: userMsg.message_id };
     }
 });
 
@@ -308,8 +341,19 @@ bot.action(/^approve_(\d+)$/, async (ctx) => {
         return;
     }
     
-    // Delete admin's callback query message
-    await deleteMessage(ctx);
+    // Delete callback query message and related messages
+    if (ctx.update.callback_query?.message) {
+        const chatId = ctx.update.callback_query.message.chat.id;
+        const messageId = ctx.update.callback_query.message.message_id;
+        
+        try {
+            // Delete both admin notification messages
+            await ctx.telegram.deleteMessage(chatId, messageId);
+            await ctx.telegram.deleteMessage(chatId, messageId - 1);
+        } catch (error) {
+            console.log('Error deleting admin messages:', error.message);
+        }
+    }
     
     if (users[targetUserId]) {
         users[targetUserId].approved = true;
@@ -318,8 +362,15 @@ bot.action(/^approve_(\d+)$/, async (ctx) => {
         users[targetUserId].approvalTime = getCurrentDateTime().time;
         saveUsers();
         
+        // Clean up user's old messages
+        try {
+            await cleanupOldMessages(ctx, targetUserId);
+        } catch (error) {
+            console.log('Error cleaning user messages:', error.message);
+        }
+        
         // Notify user
-        await bot.telegram.sendMessage(
+        const userMsg = await bot.telegram.sendMessage(
             targetUserId,
             `🎉 *Your Account Has Been Approved!*\n\n` +
             `You can now use all features of the bot.\n\n` +
@@ -331,9 +382,11 @@ bot.action(/^approve_(\d+)$/, async (ctx) => {
                 ])
             }
         );
+        trackBotMessage(targetUserId, userMsg.message_id);
         
         // Send confirmation to admin
-        const msg = await ctx.reply(
+        await cleanupOldMessages(ctx, adminId);
+        const adminMsg = await ctx.reply(
             `✅ User *${users[targetUserId].name}* has been approved!`,
             {
                 parse_mode: 'Markdown',
@@ -343,23 +396,11 @@ bot.action(/^approve_(\d+)$/, async (ctx) => {
                 ])
             }
         );
-        
-        // Delete admin's previous messages related to this approval
-        if (ctx.update.callback_query.message) {
-            const chatId = ctx.update.callback_query.message.chat.id;
-            const messageId = ctx.update.callback_query.message.message_id;
-            try {
-                await ctx.telegram.deleteMessage(chatId, messageId - 1);
-                await ctx.telegram.deleteMessage(chatId, messageId - 2);
-            } catch (error) {
-                console.log('Error deleting admin messages:', error.message);
-            }
-        }
-        
-        sessions[adminId] = { lastBotMessage: msg.message_id };
+        trackBotMessage(adminId, adminMsg.message_id);
     } else {
-        const msg = await ctx.reply('User not found!');
-        sessions[adminId] = { lastBotMessage: msg.message_id };
+        await cleanupOldMessages(ctx, adminId);
+        const adminMsg = await ctx.reply('User not found!');
+        trackBotMessage(adminId, adminMsg.message_id);
     }
     
     await ctx.answerCbQuery();
@@ -374,18 +415,30 @@ bot.action(/^reject_(\d+)$/, async (ctx) => {
         return;
     }
     
-    // Delete callback query message
-    await deleteMessage(ctx);
+    // Delete callback query message and related messages
+    if (ctx.update.callback_query?.message) {
+        const chatId = ctx.update.callback_query.message.chat.id;
+        const messageId = ctx.update.callback_query.message.message_id;
+        
+        try {
+            // Delete both admin notification messages
+            await ctx.telegram.deleteMessage(chatId, messageId);
+            await ctx.telegram.deleteMessage(chatId, messageId - 1);
+        } catch (error) {
+            console.log('Error deleting admin messages:', error.message);
+        }
+    }
     
     pendingAdminRejections[adminId] = targetUserId;
     
-    const msg = await ctx.reply(
+    await cleanupOldMessages(ctx, adminId);
+    const adminMsg = await ctx.reply(
         `Please enter the reason for rejecting user ${targetUserId}:`,
         Markup.inlineKeyboard([
             [Markup.button.callback('❌ Cancel Rejection', `cancel_reject_${targetUserId}`)]
         ])
     );
-    sessions[adminId] = { lastBotMessage: msg.message_id };
+    trackBotMessage(adminId, adminMsg.message_id);
     await ctx.answerCbQuery();
 });
 
@@ -398,18 +451,21 @@ bot.on('text', async (ctx) => {
         const reason = ctx.message.text;
         
         // Delete admin's text message
-        if (ctx.message) {
-            await deleteMessage(ctx, ctx.message.message_id);
-        }
+        await deleteMessage(ctx);
         
-        // Delete previous bot message
-        if (sessions[userId]?.lastBotMessage) {
-            await deleteMessage(ctx, sessions[userId].lastBotMessage);
-        }
+        // Clean up admin's old messages
+        await cleanupOldMessages(ctx, userId);
         
         if (users[targetUserId]) {
+            // Clean up user's old messages
+            try {
+                await cleanupOldMessages({ telegram: bot.telegram, chat: { id: targetUserId } }, targetUserId);
+            } catch (error) {
+                console.log('Error cleaning user messages:', error.message);
+            }
+            
             // Notify user
-            await bot.telegram.sendMessage(
+            const userMsg = await bot.telegram.sendMessage(
                 targetUserId,
                 `❌ *Your Registration Was Rejected*\n\n` +
                 `Reason: ${reason}\n\n` +
@@ -422,17 +478,18 @@ bot.on('text', async (ctx) => {
                     ])
                 }
             );
+            trackBotMessage(targetUserId, userMsg.message_id);
             
             delete users[targetUserId];
             saveUsers();
             
-            const msg = await ctx.reply(
+            const adminMsg = await ctx.reply(
                 `✅ User has been rejected and notified.\nReason: ${reason}`,
                 Markup.inlineKeyboard([
                     [Markup.button.callback('📋 View All Users', 'view_all_users')]
                 ])
             );
-            sessions[userId] = { lastBotMessage: msg.message_id };
+            trackBotMessage(userId, adminMsg.message_id);
         }
         
         delete pendingAdminRejections[userId];
@@ -452,13 +509,14 @@ bot.action(/^cancel_reject_(\d+)$/, async (ctx) => {
     
     delete pendingAdminRejections[adminId];
     
-    const msg = await ctx.reply(
+    await cleanupOldMessages(ctx, adminId);
+    const adminMsg = await ctx.reply(
         'Rejection cancelled.',
         Markup.inlineKeyboard([
             [Markup.button.callback('📋 View Pending Users', 'view_pending_users')]
         ])
     );
-    sessions[adminId] = { lastBotMessage: msg.message_id };
+    trackBotMessage(adminId, adminMsg.message_id);
     await ctx.answerCbQuery();
 });
 
@@ -471,13 +529,11 @@ bot.action('view_all_users', async (ctx) => {
         return;
     }
     
-    // Delete previous bot message
-    if (sessions[adminId]?.lastBotMessage) {
-        await deleteMessage(ctx, sessions[adminId].lastBotMessage);
-    }
-    
     // Delete callback query message
     await deleteMessage(ctx);
+    
+    // Clean up old messages
+    await cleanupOldMessages(ctx, adminId);
     
     const allUsers = Object.entries(users);
     
@@ -488,7 +544,7 @@ bot.action('view_all_users', async (ctx) => {
                 [Markup.button.callback('🔙 Back to Admin Panel', 'back_to_admin')]
             ])
         );
-        sessions[adminId] = { lastBotMessage: msg.message_id };
+        trackBotMessage(adminId, msg.message_id);
         return;
     }
     
@@ -517,7 +573,7 @@ bot.action('view_all_users', async (ctx) => {
                 { parse_mode: 'Markdown' }
             );
             message = '';
-            sessions[adminId] = { lastBotMessage: msgPart.message_id };
+            trackBotMessage(adminId, msgPart.message_id);
         }
     }
     
@@ -533,7 +589,7 @@ bot.action('view_all_users', async (ctx) => {
                 ])
             }
         );
-        sessions[adminId] = { lastBotMessage: msg.message_id };
+        trackBotMessage(adminId, msg.message_id);
     }
 });
 
@@ -546,13 +602,11 @@ bot.action('view_pending_users', async (ctx) => {
         return;
     }
     
-    // Delete previous bot message
-    if (sessions[adminId]?.lastBotMessage) {
-        await deleteMessage(ctx, sessions[adminId].lastBotMessage);
-    }
-    
     // Delete callback query message
     await deleteMessage(ctx);
+    
+    // Clean up old messages
+    await cleanupOldMessages(ctx, adminId);
     
     const pendingUsers = Object.entries(users).filter(([_, user]) => 
         user.role === 'user' && !user.approved
@@ -566,7 +620,7 @@ bot.action('view_pending_users', async (ctx) => {
                 [Markup.button.callback('🔙 Back to Admin Panel', 'back_to_admin')]
             ])
         );
-        sessions[adminId] = { lastBotMessage: msg.message_id };
+        trackBotMessage(adminId, msg.message_id);
         return;
     }
     
@@ -594,7 +648,7 @@ bot.action('view_pending_users', async (ctx) => {
             ...Markup.inlineKeyboard(buttons)
         }
     );
-    sessions[adminId] = { lastBotMessage: msg.message_id };
+    trackBotMessage(adminId, msg.message_id);
 });
 
 // ===== VIEW STATISTICS =====
@@ -606,13 +660,11 @@ bot.action('view_stats', async (ctx) => {
         return;
     }
     
-    // Delete previous bot message
-    if (sessions[adminId]?.lastBotMessage) {
-        await deleteMessage(ctx, sessions[adminId].lastBotMessage);
-    }
-    
     // Delete callback query message
     await deleteMessage(ctx);
+    
+    // Clean up old messages
+    await cleanupOldMessages(ctx, adminId);
     
     const totalUsers = Object.keys(users).length;
     const approvedUsers = Object.values(users).filter(u => u.approved).length;
@@ -636,7 +688,7 @@ bot.action('view_stats', async (ctx) => {
             ])
         }
     );
-    sessions[adminId] = { lastBotMessage: msg.message_id };
+    trackBotMessage(adminId, msg.message_id);
 });
 
 // ===== BROADCAST MESSAGE =====
@@ -648,17 +700,14 @@ bot.action('broadcast_message', async (ctx) => {
         return;
     }
     
-    // Delete previous bot message
-    if (sessions[adminId]?.lastBotMessage) {
-        await deleteMessage(ctx, sessions[adminId].lastBotMessage);
-    }
-    
     // Delete callback query message
     await deleteMessage(ctx);
     
+    // Clean up old messages
+    await cleanupOldMessages(ctx, adminId);
+    
     sessions[adminId] = {
-        step: 'awaiting_broadcast',
-        lastBotMessage: null
+        step: 'awaiting_broadcast'
     };
     
     const msg = await ctx.reply(
@@ -671,7 +720,7 @@ bot.action('broadcast_message', async (ctx) => {
             ])
         }
     );
-    sessions[adminId].lastBotMessage = msg.message_id;
+    trackBotMessage(adminId, msg.message_id);
 });
 
 // Handle broadcast message
@@ -682,20 +731,17 @@ bot.on('text', async (ctx) => {
         const message = ctx.message.text;
         
         // Delete admin's text message
-        if (ctx.message) {
-            await deleteMessage(ctx, ctx.message.message_id);
-        }
+        await deleteMessage(ctx);
         
-        // Delete previous bot message
-        if (sessions[userId]?.lastBotMessage) {
-            await deleteMessage(ctx, sessions[userId].lastBotMessage);
-        }
+        // Clean up old messages
+        await cleanupOldMessages(ctx, userId);
         
         const approvedUsers = Object.entries(users).filter(([_, user]) => user.approved);
         let successCount = 0;
         let failCount = 0;
         
         const progressMsg = await ctx.reply(`📤 Sending broadcast to ${approvedUsers.length} users...`);
+        trackBotMessage(userId, progressMsg.message_id);
         
         for (const [id, user] of approvedUsers) {
             try {
@@ -728,7 +774,7 @@ bot.on('text', async (ctx) => {
         );
         
         delete sessions[userId].step;
-        sessions[userId].lastBotMessage = resultMsg.message_id;
+        trackBotMessage(userId, resultMsg.message_id);
     }
 });
 
@@ -745,13 +791,14 @@ bot.action('cancel_broadcast', async (ctx) => {
     
     delete sessions[adminId]?.step;
     
+    await cleanupOldMessages(ctx, adminId);
     const msg = await ctx.reply(
         'Broadcast cancelled.',
         Markup.inlineKeyboard([
             [Markup.button.callback('🔙 Back to Admin Panel', 'back_to_admin')]
         ])
     );
-    sessions[adminId] = { lastBotMessage: msg.message_id };
+    trackBotMessage(adminId, msg.message_id);
     await ctx.answerCbQuery();
 });
 
@@ -767,6 +814,7 @@ bot.action('admin_logout', async (ctx) => {
     // Delete callback query message
     await deleteMessage(ctx);
     
+    await cleanupOldMessages(ctx, adminId);
     const msg = await ctx.reply(
         'You have been logged out.',
         Markup.inlineKeyboard([
@@ -775,7 +823,7 @@ bot.action('admin_logout', async (ctx) => {
     );
     
     delete sessions[adminId];
-    sessions[adminId] = { lastBotMessage: msg.message_id };
+    trackBotMessage(adminId, msg.message_id);
     await ctx.answerCbQuery();
 });
 
@@ -788,13 +836,11 @@ bot.action('refresh_status', async (ctx) => {
         return;
     }
     
-    // Delete previous bot message
-    if (sessions[userId]?.lastBotMessage) {
-        await deleteMessage(ctx, sessions[userId].lastBotMessage);
-    }
-    
     // Delete callback query message
     await deleteMessage(ctx);
+    
+    // Clean up old messages
+    await cleanupOldMessages(ctx, userId);
     
     const user = users[userId];
     const msg = await ctx.reply(
@@ -812,7 +858,7 @@ bot.action('refresh_status', async (ctx) => {
             ])
         }
     );
-    sessions[userId] = { lastBotMessage: msg.message_id };
+    trackBotMessage(userId, msg.message_id);
     await ctx.answerCbQuery();
 });
 
@@ -822,6 +868,7 @@ bot.action('delete_account', async (ctx) => {
     // Delete callback query message
     await deleteMessage(ctx);
     
+    await cleanupOldMessages(ctx, userId);
     const msg = await ctx.reply(
         '⚠️ *Are you sure you want to delete your account?*\n\n' +
         'This action cannot be undone!',
@@ -833,7 +880,7 @@ bot.action('delete_account', async (ctx) => {
             ])
         }
     );
-    sessions[userId] = { lastBotMessage: msg.message_id };
+    trackBotMessage(userId, msg.message_id);
     await ctx.answerCbQuery();
 });
 
@@ -846,6 +893,7 @@ bot.action('confirm_delete_account', async (ctx) => {
     delete users[userId];
     saveUsers();
     
+    await cleanupOldMessages(ctx, userId);
     const msg = await ctx.reply(
         '✅ Your account has been deleted successfully.',
         Markup.inlineKeyboard([
@@ -853,7 +901,7 @@ bot.action('confirm_delete_account', async (ctx) => {
         ])
     );
     delete sessions[userId];
-    sessions[userId] = { lastBotMessage: msg.message_id };
+    trackBotMessage(userId, msg.message_id);
     await ctx.answerCbQuery();
 });
 
@@ -863,13 +911,14 @@ bot.action('cancel_delete_account', async (ctx) => {
     // Delete callback query message
     await deleteMessage(ctx);
     
+    await cleanupOldMessages(ctx, userId);
     const msg = await ctx.reply(
         'Account deletion cancelled.',
         Markup.inlineKeyboard([
             [Markup.button.callback('🔙 Back to Main', 'back_to_main')]
         ])
     );
-    sessions[userId] = { lastBotMessage: msg.message_id };
+    trackBotMessage(userId, msg.message_id);
     await ctx.answerCbQuery();
 });
 
@@ -877,13 +926,11 @@ bot.action('cancel_delete_account', async (ctx) => {
 bot.action('help', async (ctx) => {
     const userId = ctx.from.id;
     
-    // Delete previous bot message
-    if (sessions[userId]?.lastBotMessage) {
-        await deleteMessage(ctx, sessions[userId].lastBotMessage);
-    }
-    
     // Delete callback query message
     await deleteMessage(ctx);
+    
+    // Clean up old messages
+    await cleanupOldMessages(ctx, userId);
     
     const msg = await ctx.reply(
         `🆘 *Help & Support*\n\n` +
@@ -900,7 +947,7 @@ bot.action('help', async (ctx) => {
             ])
         }
     );
-    sessions[userId] = { lastBotMessage: msg.message_id };
+    trackBotMessage(userId, msg.message_id);
     await ctx.answerCbQuery();
 });
 
@@ -910,14 +957,15 @@ bot.action('contact_admin', async (ctx) => {
     // Delete callback query message
     await deleteMessage(ctx);
     
+    await cleanupOldMessages(ctx, userId);
     const msg = await ctx.reply(
         'Please send your message to the admin. Type your message below:'
     );
     
     sessions[userId] = {
-        step: 'contacting_admin',
-        lastBotMessage: msg.message_id
+        step: 'contacting_admin'
     };
+    trackBotMessage(userId, msg.message_id);
     await ctx.answerCbQuery();
 });
 
@@ -930,17 +978,13 @@ bot.on('text', async (ctx) => {
         const userName = ctx.from.first_name + (ctx.from.last_name ? ` ${ctx.from.last_name}` : '');
         
         // Delete user's text message
-        if (ctx.message) {
-            await deleteMessage(ctx, ctx.message.message_id);
-        }
+        await deleteMessage(ctx);
         
-        // Delete previous bot message
-        if (sessions[userId]?.lastBotMessage) {
-            await deleteMessage(ctx, sessions[userId].lastBotMessage);
-        }
+        // Clean up user's old messages
+        await cleanupOldMessages(ctx, userId);
         
-        // Forward to admin
-        await bot.telegram.sendMessage(
+        // Send two messages to admin
+        const adminMsg1 = await bot.telegram.sendMessage(
             ADMIN_ID,
             `📩 *New Message from User*\n\n` +
             `👤 Name: ${userName}\n` +
@@ -956,7 +1000,26 @@ bot.on('text', async (ctx) => {
             }
         );
         
-        const msg = await ctx.reply(
+        // Second message to admin about user info
+        const adminMsg2 = await bot.telegram.sendMessage(
+            ADMIN_ID,
+            `📋 *User Information*\n\n` +
+            `User: ${userName}\n` +
+            `ID: ${userId}\n` +
+            `Status: ${users[userId] ? (users[userId].approved ? '✅ Approved' : '⏳ Pending') : '❌ Not Registered'}\n` +
+            `Registration Date: ${users[userId] ? users[userId].registrationDate : 'N/A'}`,
+            {
+                parse_mode: 'Markdown'
+            }
+        );
+        
+        // Track both admin messages
+        if (!lastBotMessages[ADMIN_ID]) {
+            lastBotMessages[ADMIN_ID] = [];
+        }
+        lastBotMessages[ADMIN_ID].push(adminMsg1.message_id, adminMsg2.message_id);
+        
+        const userMsg = await ctx.reply(
             '✅ Your message has been sent to the admin. They will respond soon.',
             Markup.inlineKeyboard([
                 [Markup.button.callback('🔙 Back to Main', 'back_to_main')]
@@ -964,7 +1027,7 @@ bot.on('text', async (ctx) => {
         );
         
         delete sessions[userId].step;
-        sessions[userId] = { lastBotMessage: msg.message_id };
+        trackBotMessage(userId, userMsg.message_id);
     }
 });
 
@@ -972,13 +1035,11 @@ bot.on('text', async (ctx) => {
 bot.action('back_to_main', async (ctx) => {
     const userId = ctx.from.id;
     
-    // Delete previous bot message
-    if (sessions[userId]?.lastBotMessage) {
-        await deleteMessage(ctx, sessions[userId].lastBotMessage);
-    }
-    
     // Delete callback query message
     await deleteMessage(ctx);
+    
+    // Clean up old messages
+    await cleanupOldMessages(ctx, userId);
     
     const msg = await ctx.reply(
         `🏠 *Main Menu*\n\n` +
@@ -991,7 +1052,7 @@ bot.action('back_to_main', async (ctx) => {
             ])
         }
     );
-    sessions[userId] = { lastBotMessage: msg.message_id };
+    trackBotMessage(userId, msg.message_id);
     await ctx.answerCbQuery();
 });
 
@@ -1003,13 +1064,11 @@ bot.action('back_to_admin', async (ctx) => {
         return;
     }
     
-    // Delete previous bot message
-    if (sessions[adminId]?.lastBotMessage) {
-        await deleteMessage(ctx, sessions[adminId].lastBotMessage);
-    }
-    
     // Delete callback query message
     await deleteMessage(ctx);
+    
+    // Clean up old messages
+    await cleanupOldMessages(ctx, adminId);
     
     const { date, time } = getCurrentDateTime();
     const msg = await ctx.reply(
@@ -1028,7 +1087,7 @@ bot.action('back_to_admin', async (ctx) => {
             ])
         }
     );
-    sessions[adminId] = { lastBotMessage: msg.message_id };
+    trackBotMessage(adminId, msg.message_id);
     await ctx.answerCbQuery();
 });
 
@@ -1038,6 +1097,9 @@ bot.action('get_started', async (ctx) => {
     
     // Delete callback query message
     await deleteMessage(ctx);
+    
+    // Clean up old messages
+    await cleanupOldMessages(ctx, userId);
     
     const msg = await ctx.reply(
         `🚀 *Welcome ${ctx.from.first_name}!*\n\n` +
@@ -1051,7 +1113,7 @@ bot.action('get_started', async (ctx) => {
             ])
         }
     );
-    sessions[userId] = { lastBotMessage: msg.message_id };
+    trackBotMessage(userId, msg.message_id);
     await ctx.answerCbQuery();
 });
 
@@ -1061,14 +1123,15 @@ bot.action('contact_support', async (ctx) => {
     // Delete callback query message
     await deleteMessage(ctx);
     
+    await cleanupOldMessages(ctx, userId);
     const msg = await ctx.reply(
         'Please describe your issue and our support team will help you:'
     );
     
     sessions[userId] = {
-        step: 'contacting_support',
-        lastBotMessage: msg.message_id
+        step: 'contacting_support'
     };
+    trackBotMessage(userId, msg.message_id);
     await ctx.answerCbQuery();
 });
 
@@ -1080,17 +1143,13 @@ bot.on('text', async (ctx) => {
         const message = ctx.message.text;
         
         // Delete user's text message
-        if (ctx.message) {
-            await deleteMessage(ctx, ctx.message.message_id);
-        }
+        await deleteMessage(ctx);
         
-        // Delete previous bot message
-        if (sessions[userId]?.lastBotMessage) {
-            await deleteMessage(ctx, sessions[userId].lastBotMessage);
-        }
+        // Clean up user's old messages
+        await cleanupOldMessages(ctx, userId);
         
-        // Forward to admin as support request
-        await bot.telegram.sendMessage(
+        // Send two messages to admin as support request
+        const adminMsg1 = await bot.telegram.sendMessage(
             ADMIN_ID,
             `🆘 *Support Request*\n\n` +
             `👤 User ID: ${userId}\n` +
@@ -1103,7 +1162,26 @@ bot.on('text', async (ctx) => {
             }
         );
         
-        const msg = await ctx.reply(
+        // Second message with user info
+        const adminMsg2 = await bot.telegram.sendMessage(
+            ADMIN_ID,
+            `📋 *User Details*\n\n` +
+            `User ID: ${userId}\n` +
+            `Name: ${ctx.from.first_name}${ctx.from.last_name ? ' ' + ctx.from.last_name : ''}\n` +
+            `Username: @${ctx.from.username || 'N/A'}\n` +
+            `Account Status: ${users[userId] ? (users[userId].approved ? '✅ Approved' : '⏳ Pending') : '❌ Not Registered'}`,
+            {
+                parse_mode: 'Markdown'
+            }
+        );
+        
+        // Track both admin messages
+        if (!lastBotMessages[ADMIN_ID]) {
+            lastBotMessages[ADMIN_ID] = [];
+        }
+        lastBotMessages[ADMIN_ID].push(adminMsg1.message_id, adminMsg2.message_id);
+        
+        const userMsg = await ctx.reply(
             '✅ Your support request has been submitted. We will contact you soon.',
             Markup.inlineKeyboard([
                 [Markup.button.callback('🔙 Back to Main', 'back_to_main')]
@@ -1111,7 +1189,7 @@ bot.on('text', async (ctx) => {
         );
         
         delete sessions[userId].step;
-        sessions[userId] = { lastBotMessage: msg.message_id };
+        trackBotMessage(userId, userMsg.message_id);
     }
 });
 
@@ -1128,9 +1206,11 @@ bot.action(/^reply_to_(\d+)$/, async (ctx) => {
     // Delete callback query message
     await deleteMessage(ctx);
     
+    // Clean up old messages
+    await cleanupOldMessages(ctx, adminId);
+    
     sessions[adminId] = {
-        step: `replying_to_${targetUserId}`,
-        lastBotMessage: null
+        step: `replying_to_${targetUserId}`
     };
     
     const msg = await ctx.reply(
@@ -1140,7 +1220,7 @@ bot.action(/^reply_to_(\d+)$/, async (ctx) => {
             [Markup.button.callback('❌ Cancel Reply', `cancel_reply_${targetUserId}`)]
         ])
     );
-    sessions[adminId].lastBotMessage = msg.message_id;
+    trackBotMessage(adminId, msg.message_id);
     await ctx.answerCbQuery();
 });
 
@@ -1153,37 +1233,40 @@ bot.on('text', async (ctx) => {
         const replyMessage = ctx.message.text;
         
         // Delete admin's text message
-        if (ctx.message) {
-            await deleteMessage(ctx, ctx.message.message_id);
-        }
+        await deleteMessage(ctx);
         
-        // Delete previous bot message
-        if (sessions[adminId]?.lastBotMessage) {
-            await deleteMessage(ctx, sessions[adminId].lastBotMessage);
-        }
+        // Clean up admin's old messages
+        await cleanupOldMessages(ctx, adminId);
         
         try {
+            // Clean up user's old messages
+            try {
+                await cleanupOldMessages({ telegram: bot.telegram, chat: { id: targetUserId } }, targetUserId);
+            } catch (error) {
+                console.log('Error cleaning user messages:', error.message);
+            }
+            
             await bot.telegram.sendMessage(
                 targetUserId,
                 `📩 *Message from Admin*\n\n${replyMessage}`,
                 { parse_mode: 'Markdown' }
             );
             
-            const msg = await ctx.reply(
+            const adminMsg = await ctx.reply(
                 `✅ Reply sent to user ${targetUserId}.`,
                 Markup.inlineKeyboard([
                     [Markup.button.callback('🔙 Back to Admin Panel', 'back_to_admin')]
                 ])
             );
-            sessions[adminId] = { lastBotMessage: msg.message_id };
+            trackBotMessage(adminId, adminMsg.message_id);
         } catch (error) {
-            const msg = await ctx.reply(
+            const adminMsg = await ctx.reply(
                 `❌ Failed to send reply: ${error.message}`,
                 Markup.inlineKeyboard([
                     [Markup.button.callback('🔙 Back to Admin Panel', 'back_to_admin')]
                 ])
             );
-            sessions[adminId] = { lastBotMessage: msg.message_id };
+            trackBotMessage(adminId, adminMsg.message_id);
         }
         
         delete sessions[adminId].step;
@@ -1203,13 +1286,14 @@ bot.action(/^cancel_reply_(\d+)$/, async (ctx) => {
     
     delete sessions[adminId]?.step;
     
+    await cleanupOldMessages(ctx, adminId);
     const msg = await ctx.reply(
         'Reply cancelled.',
         Markup.inlineKeyboard([
             [Markup.button.callback('🔙 Back to Admin Panel', 'back_to_admin')]
         ])
     );
-    sessions[adminId] = { lastBotMessage: msg.message_id };
+    trackBotMessage(adminId, msg.message_id);
     await ctx.answerCbQuery();
 });
 
@@ -1225,6 +1309,9 @@ bot.action(/^view_profile_(\d+)$/, async (ctx) => {
     
     // Delete callback query message
     await deleteMessage(ctx);
+    
+    // Clean up old messages
+    await cleanupOldMessages(ctx, adminId);
     
     if (users[targetUserId]) {
         const user = users[targetUserId];
@@ -1247,7 +1334,7 @@ bot.action(/^view_profile_(\d+)$/, async (ctx) => {
                 ])
             }
         );
-        sessions[adminId] = { lastBotMessage: msg.message_id };
+        trackBotMessage(adminId, msg.message_id);
     } else {
         const msg = await ctx.reply(
             'User not found.',
@@ -1255,7 +1342,7 @@ bot.action(/^view_profile_(\d+)$/, async (ctx) => {
                 [Markup.button.callback('🔙 Back to Admin Panel', 'back_to_admin')]
             ])
         );
-        sessions[adminId] = { lastBotMessage: msg.message_id };
+        trackBotMessage(adminId, msg.message_id);
     }
     await ctx.answerCbQuery();
 });
