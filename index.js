@@ -36,6 +36,25 @@ function withBackButton(buttons = []) {
 
 // ======= START =======
 bot.start(async (ctx) => {
+    const chatId = ctx.chat.id;
+    const session = sessions[chatId];
+
+    if (session && session.usernameKey && users[session.usernameKey]) {
+        // Already logged in, show dashboard
+        const user = users[session.usernameKey];
+        return ctx.reply(
+            `Dear ${user.firstName}, Welcome Back To Paid WhatsApp Bot`,
+            withBackButton([
+                [Markup.button.callback('Check Balance', 'checkBalance')],
+                [Markup.button.callback('Buy Bot', 'buyBot')],
+                [Markup.button.callback('Deposit Balance', 'depositBalance')],
+                [Markup.button.callback('Withdraw Balance', 'withdrawBalance')],
+                [Markup.button.callback('Log Out', 'logOut')]
+            ])
+        );
+    }
+
+    // Not logged in
     await ctx.reply(
         '👋 Welcome!\n\nPlease Sign Up or Log In:',
         Markup.inlineKeyboard([
@@ -161,7 +180,13 @@ bot.on('text', async (ctx) => {
         switch (session.step) {
             case 'loginUsername':
                 if (!users[text]) {
-                    return ctx.reply('Username not found.');
+                    return ctx.reply(
+                        'Username not found.',
+                        Markup.inlineKeyboard([
+                            [Markup.button.callback('Sign Up', 'signup')],
+                            [Markup.button.callback('⬅️ Back', 'backToMenu')]
+                        ])
+                    );
                 }
                 session.user = users[text];
                 session.usernameKey = text;
