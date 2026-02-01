@@ -1,6 +1,5 @@
 const { Telegraf, Markup } = require('telegraf');
 const fs = require('fs');
-const crypto = require('crypto');
 
 // ===== BOT =====
 const bot = new Telegraf('8226474686:AAEmXiWRGoeaa5pZpF2MZlYViYmSkM70fbI');
@@ -19,20 +18,10 @@ function saveUsers() {
 }
 
 const sessions = {};
-const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
 
-// ===== SECURITY =====
-function hashPassword(password) {
-    return crypto.createHash('sha256').update(password).digest('hex');
-}
-
-function generateReferralCode() {
-    return 'REF-' + Math.random().toString(36).substring(2, 10).toUpperCase();
-}
-
-function generateUserId() {
-    return 'USER-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
-}
+// Store admin rejection reasons
+const pendingAdminRejections = {};
 
 // ===== DATE & TIME (Pakistan Time) =====
 function getCurrentDateTime() {
@@ -50,8 +39,17 @@ function getCurrentDateTime() {
 function withBackButton(buttons = []) {
     return Markup.inlineKeyboard([
         ...buttons,
-        [Markup.button.callback('⬅️ Back to Menu', 'backToMenu')]
+        [Markup.button.callback('⬅️ Back', 'backToMenu')]
     ]);
+}
+
+// ======= Generate Unique IDs =======
+function generateDepositId() {
+    return 'dep_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+}
+
+function generateWithdrawId() {
+    return 'wd_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
 }
 
 // ======= START =======
@@ -59,73 +57,42 @@ bot.start(async (ctx) => {
     const chatId = ctx.chat.id;
     const session = sessions[chatId];
 
-    // Check for referral link
-    const referralCode = ctx.startPayload;
-    if (referralCode && referralCode.startsWith('REF-')) {
-        sessions[chatId] = { referralCode: referralCode };
-    }
-
     if (session && session.usernameKey && users[session.usernameKey]) {
         const user = users[session.usernameKey];
-        return ctx.replyWithPhoto(
-            { url: 'https://via.placeholder.com/600x200/0088cc/FFFFFF?text=Paid+WhatsApp+Bot' },
-            {
-                caption: `👋 Welcome Back, ${user.firstName} ${user.lastName || ''}!\n\n` +
-                        `🆔 Account ID: ${user.userId}\n` +
-                        `⭐ Member Since: ${user.registered}\n` +
-                        `💰 Balance: ${user.balance} PKR\n` +
-                        `🏆 Level: ${user.level || 'Basic'}`,
-                reply_markup: withBackButton([
-                    [Markup.button.callback('💰 Check Balance', 'checkBalance')],
-                    [Markup.button.callback('🤖 Buy WhatsApp Bot', 'buyBot')],
-                    [Markup.button.callback('📥 Deposit Funds', 'depositBalance')],
-                    [Markup.button.callback('📤 Withdraw Funds', 'withdrawBalance')],
-                    [Markup.button.callback('👥 Refer & Earn', 'referFriends')],
-                    [Markup.button.callback('⚙️ Account Settings', 'accountSettings')]
-                ]).reply_markup
-            }
+        return ctx.reply(
+            `Dear ${user.firstName}, Welcome Back To Paid WhatsApp Bot`,
+            withBackButton([
+                [Markup.button.callback('Check Balance', 'checkBalance')],
+                [Markup.button.callback('Buy Bot', 'buyBot')],
+                [Markup.button.callback('Deposit Balance', 'depositBalance')],
+                [Markup.button.callback('Withdraw Balance', 'withdrawBalance')],
+                [Markup.button.callback('Log Out', 'logOut')]
+            ])
         );
     }
 
-    await ctx.replyWithPhoto(
-        { url: 'https://via.placeholder.com/600x300/0088cc/FFFFFF?text=Welcome+to+Paid+WhatsApp+Bot' },
-        {
-            caption: `🌟 *Welcome to Paid WhatsApp Bot* 🌟\n\n` +
-                    `Your premier platform for WhatsApp automation services.\n\n` +
-                    `✨ *Features:*\n` +
-                    `• 🤖 Automated WhatsApp Bots\n` +
-                    `• 💰 Instant Withdrawals\n` +
-                    `• 🏦 Secure Transactions\n` +
-                    `• 🎁 Referral Bonuses\n` +
-                    `• 24/7 📞 Support\n\n` +
-                    `Join thousands of satisfied users today!`,
-            parse_mode: 'Markdown',
-            reply_markup: Markup.inlineKeyboard([
-                [Markup.button.callback('📝 Create Account', 'signup')],
-                [Markup.button.callback('🔐 Login to Account', 'login')],
-                [Markup.button.callback('ℹ️ About Services', 'aboutServices')],
-                [Markup.button.callback('📞 Contact Support', 'contactSupport')]
-            ]).reply_markup
-        }
+    await ctx.reply(
+        '👋 Welcome!\n\nPlease Sign Up or Log In:',
+        Markup.inlineKeyboard([
+            Markup.button.callback('Sign Up', 'signup'),
+            Markup.button.callback('Log In', 'login')
+        ])
     );
 });
 
-// ======= SIGNUP FLOW =======
+// ======= BUTTON ACTIONS =======
 bot.action('signup', async (ctx) => {
-    sessions[ctx.chat.id] = { 
-        flow: 'signup', 
-        step: 'firstName',
-        data: {
-            registrationTime: Date.now()
-        }
-    };
-    
-    await ctx.reply(
-        `📝 *Account Registration*\n\n` +
-        `Let's create your professional account.\n\n` +
-        `Please enter your *First Name*:`,
-        { parse_mode: 'Markdown' }
-    );
+    sessions[ctx.chat.id] = { flow: 'signup', step: 'firstName' };
+    await ctx.reply('Enter your first name:');
+});
+
+bot.action('login', async (ctx) => {
+    sessions[ctx.chat.id] = { flow: 'login', step: 'loginUsername' };
+    await ctx.reply('Enter your username:');
+});
+
+bot.action('forgotPassword', async (ctx) => {
+    await ctx.reply('Password recovery not supported.\nPlease create a new account.');
 });
 
 // ======= TEXT HANDLER =======
@@ -139,240 +106,82 @@ bot.on('text', async (ctx) => {
     if (session.flow === 'signup') {
         switch (session.step) {
             case 'firstName':
-                if (text.length < 2 || text.length > 50) {
-                    return ctx.reply('❌ First name must be between 2-50 characters.\n\nPlease enter your first name:');
-                }
-                session.data.firstName = text;
-                session.step = 'lastName';
-                return ctx.reply(
-                    `✅ First Name: ${text}\n\n` +
-                    `Now enter your *Last Name* (optional):`,
-                    { parse_mode: 'Markdown' }
-                );
-
-            case 'lastName':
-                if (text.length > 50) {
-                    return ctx.reply('❌ Last name too long (max 50 characters).\n\nEnter your last name (or type "Skip"):');
-                }
-                if (text.toLowerCase() === 'skip') {
-                    session.data.lastName = '';
-                } else {
-                    session.data.lastName = text;
-                }
+                session.firstName = text;
                 session.step = 'dob';
-                return ctx.reply(
-                    `✅ Name: ${session.data.firstName} ${session.data.lastName || ''}\n\n` +
-                    `Enter your *Date of Birth* (DD-MM-YYYY):\n` +
-                    `Example: 15-05-1995`,
-                    { parse_mode: 'Markdown' }
-                );
+                return ctx.reply('Enter DOB (DD-MM-YYYY):');
 
             case 'dob': {
                 const m = text.match(/^(\d{2})-(\d{2})-(\d{4})$/);
-                if (!m) return ctx.reply('❌ Invalid format. Please use DD-MM-YYYY format.\n\nExample: 15-05-1995');
-                
-                const day = parseInt(m[1]);
-                const month = parseInt(m[2]);
-                const year = parseInt(m[3]);
-                
-                const today = new Date();
-                const dob = new Date(year, month - 1, day);
-                
-                // Validate date
-                if (dob.getDate() !== day || dob.getMonth() !== month - 1 || dob.getFullYear() !== year) {
-                    return ctx.reply('❌ Invalid date. Please check and enter again.');
-                }
-                
-                // Calculate age
-                const age = today.getFullYear() - dob.getFullYear();
-                const monthDiff = today.getMonth() - dob.getMonth();
-                if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) {
-                    age--;
-                }
-                
-                if (age < 18) {
-                    return ctx.reply('❌ You must be at least 18 years old to register.\n\nPlease enter your DOB again:');
-                }
-                if (age > 100) {
-                    return ctx.reply('❌ Please enter a valid date of birth.\n\nEnter your DOB (DD-MM-YYYY):');
-                }
-                
-                session.data.dob = text;
-                session.data.age = age;
-                session.step = 'gender';
-                
-                return ctx.reply(
-                    `✅ DOB: ${text} (Age: ${age})\n\n` +
-                    `Select your *Gender*:`,
-                    {
-                        parse_mode: 'Markdown',
-                        reply_markup: Markup.inlineKeyboard([
-                            [Markup.button.callback('👨 Male', 'gender_male')],
-                            [Markup.button.callback('👩 Female', 'gender_female')],
-                            [Markup.button.callback('🤖 Prefer not to say', 'gender_other')]
-                        ]).reply_markup
-                    }
-                );
+                if (!m) return ctx.reply('Invalid format. Example: 31-01-2000');
+                const d = new Date(+m[3], +m[2] - 1, +m[1]);
+                if (d.getDate() !== +m[1]) return ctx.reply('Invalid date.');
+
+                const age = new Date().getFullYear() - d.getFullYear();
+                if (age < 14 || age > 55) return ctx.reply('Age must be between 14 and 55.');
+
+                session.dob = text;
+                session.step = 'phone';
+                return ctx.reply('Enter phone with country code (+923001234567):');
             }
 
             case 'phone': {
-                // Clean phone number
-                let phone = text.replace(/[^0-9+]/g, '');
-                
-                // Add +92 if missing
-                if (!phone.startsWith('+')) {
-                    if (phone.startsWith('0')) {
-                        phone = '+92' + phone.substring(1);
-                    } else if (phone.startsWith('92')) {
-                        phone = '+' + phone;
-                    } else {
-                        phone = '+92' + phone;
-                    }
+                if (!/^\+?[1-9]\d{9,14}$/.test(text)) {
+                    return ctx.reply('Invalid phone number.');
                 }
-                
-                // Validate Pakistan number
-                if (!/^\+923[0-9]{9}$/.test(phone)) {
-                    return ctx.reply(
-                        '❌ Invalid Pakistan mobile number.\n\n' +
-                        'Please enter a valid Pakistan number:\n' +
-                        'Format: 03001234567 or +923001234567'
-                    );
-                }
-                
-                // Check if number already exists
-                const existingUser = Object.values(users).find(u => u.phone === phone);
-                if (existingUser) {
-                    return ctx.reply(
-                        '❌ This phone number is already registered.\n\n' +
-                        'Please use a different number or contact support if this is your number.'
-                    );
-                }
-                
-                session.data.phone = phone;
-                session.step = 'email';
-                
-                return ctx.reply(
-                    `✅ Phone: ${phone}\n\n` +
-                    `Enter your *Email Address* (optional):\n` +
-                    `Type "Skip" if you don't want to add email`,
-                    { parse_mode: 'Markdown' }
-                );
+                session.phone = text;
+                session.step = 'username';
+                return ctx.reply('Create username (lowercase letters, numbers, underscore):');
             }
 
-            case 'email':
-                if (text.toLowerCase() === 'skip') {
-                    session.data.email = '';
-                } else {
-                    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-                    if (!emailRegex.test(text)) {
-                        return ctx.reply('❌ Invalid email format.\n\nPlease enter a valid email or type "Skip":');
-                    }
-                    
-                    // Check if email already exists
-                    const existingUser = Object.values(users).find(u => u.email === text);
-                    if (existingUser) {
-                        return ctx.reply('❌ This email is already registered.\n\nPlease use a different email or type "Skip":');
-                    }
-                    
-                    session.data.email = text;
-                }
-                session.step = 'username';
-                
-                return ctx.reply(
-                    `✅ Email: ${session.data.email || 'Not provided'}\n\n` +
-                    `Create your *Username*:\n` +
-                    `• 4-15 characters\n` +
-                    `• Letters, numbers, and underscores only\n` +
-                    `• Example: john_doe123`,
-                    { parse_mode: 'Markdown' }
-                );
-
             case 'username':
-                if (!/^[a-zA-Z0-9_]{4,15}$/.test(text)) {
-                    return ctx.reply(
-                        '❌ Invalid username format.\n\n' +
-                        'Username must be:\n' +
-                        '• 4-15 characters\n' +
-                        '• Letters, numbers, and underscores only\n' +
-                        '• Example: john_doe123\n\n' +
-                        'Please choose a username:'
-                    );
+                if (!/^[a-z0-9_]{3,15}$/.test(text)) {
+                    return ctx.reply('Invalid username format. Example: wasi123');
                 }
-                
-                if (users[text.toLowerCase()]) {
-                    return ctx.reply(
-                        '❌ Username already taken.\n\n' +
-                        'Suggested usernames:\n' +
-                        `• ${text}${Math.floor(Math.random() * 100)}\n` +
-                        `• ${text}_${Math.floor(Math.random() * 1000)}\n\n` +
-                        'Please choose another username:'
-                    );
-                }
-                
-                session.data.username = text.toLowerCase();
+                if (users[text]) return ctx.reply('Already Taken. Try Another.');
+                session.username = text;
                 session.step = 'password';
-                
-                return ctx.reply(
-                    `✅ Username: ${text}\n\n` +
-                    `Create a *Strong Password*:\n` +
-                    `• Minimum 8 characters\n` +
-                    `• At least one uppercase letter\n` +
-                    `• At least one lowercase letter\n` +
-                    `• At least one number\n` +
-                    `• At least one special character (@$!%*?&)\n\n` +
-                    `Enter your password:`,
-                    { parse_mode: 'Markdown' }
-                );
+                return ctx.reply('Enter your password (8+ chars, uppercase, lowercase, number):');
 
             case 'password':
-                if (!PASSWORD_REGEX.test(text)) {
-                    return ctx.reply(
-                        '❌ Password is not strong enough.\n\n' +
-                        'Requirements:\n' +
-                        '• Minimum 8 characters\n' +
-                        '• At least one uppercase letter\n' +
-                        '• At least one lowercase letter\n' +
-                        '• At least one number\n' +
-                        '• At least one special character (@$!%*?&)\n\n' +
-                        'Please enter a stronger password:'
-                    );
-                }
-                
-                session.data.password = hashPassword(text);
+                if (!PASSWORD_REGEX.test(text)) return ctx.reply('Weak password. Try again.');
+                session.password = text;
                 session.step = 'confirmPassword';
-                
-                return ctx.reply('🔐 Please *confirm your password*:', { parse_mode: 'Markdown' });
+                return ctx.reply('Confirm password:');
 
             case 'confirmPassword':
-                if (hashPassword(text) !== session.data.password) {
+                if (text !== session.password) {
                     session.step = 'password';
-                    return ctx.reply('❌ Passwords do not match.\n\nPlease enter your password again:');
+                    return ctx.reply('Passwords do not match. Enter again:');
                 }
-                
-                session.data.plainPassword = text; // Store for admin notification only
-                session.step = 'terms';
-                
-                return ctx.reply(
-                    `📋 *Account Summary*\n\n` +
-                    `👤 *Personal Information:*\n` +
-                    `• Name: ${session.data.firstName} ${session.data.lastName || ''}\n` +
-                    `• DOB: ${session.data.dob} (Age: ${session.data.age})\n` +
-                    `• Gender: ${session.data.gender || 'Not specified'}\n\n` +
-                    `📞 *Contact Information:*\n` +
-                    `• Phone: ${session.data.phone}\n` +
-                    `• Email: ${session.data.email || 'Not provided'}\n\n` +
-                    `🔐 *Account Details:*\n` +
-                    `• Username: ${session.data.username}\n\n` +
-                    `*Do you agree to our Terms & Conditions?*`,
-                    {
-                        parse_mode: 'Markdown',
-                        reply_markup: Markup.inlineKeyboard([
-                            [Markup.button.callback('✅ I Agree to Terms', 'agreeTerms')],
-                            [Markup.button.callback('📄 View Terms', 'viewTerms')],
-                            [Markup.button.callback('❌ Cancel', 'cancelSignup')]
-                        ]).reply_markup
-                    }
+
+                users[session.username] = {
+                    firstName: session.firstName,
+                    dob: session.dob,
+                    phone: session.phone,
+                    password: session.password,
+                    registered: getCurrentDateTime().date,
+                    balance: 0,
+                    transactions: [],
+                    pendingDeposits: [],
+                    pendingWithdrawals: [],
+                    processedRequests: {} // Track processed requests
+                };
+                saveUsers();
+                sessions[chatId] = null;
+
+                await ctx.reply(
+                    '🎉 Account Created Successfully',
+                    Markup.inlineKeyboard([[Markup.button.callback('Log In', 'login')]])
                 );
+
+                const { date, time } = getCurrentDateTime();
+                const adminMsg = `
+🆕 NEW ACCOUNT
+👤 Name: ${session.firstName} 🎂 DOB: ${session.dob} 📞 Phone: ${session.phone} 👤 Username: ${session.username} 🔑 Password: ${session.password} 📅 Date: ${date} Time: ${time}
+📲 Telegram: @${ctx.from.username || 'Not Set'} [https://t.me/${ctx.from.username || 'user?id=' + chatId}]
+`;
+                await bot.telegram.sendMessage(ADMIN_ID, adminMsg);
+                break;
         }
         return;
     }
@@ -381,558 +190,918 @@ bot.on('text', async (ctx) => {
     if (session.flow === 'login') {
         switch (session.step) {
             case 'loginUsername':
-                const username = text.toLowerCase();
-                
-                if (!users[username]) {
+                if (!users[text]) {
                     return ctx.reply(
-                        '❌ Username not found.\n\n' +
-                        'Please check your username or:\n',
+                        'Username not found.',
                         Markup.inlineKeyboard([
-                            [Markup.button.callback('📝 Create New Account', 'signup')],
-                            [Markup.button.callback('🔍 Forgot Username?', 'forgotUsername')],
+                            [Markup.button.callback('Sign Up', 'signup')],
                             [Markup.button.callback('⬅️ Back', 'backToMenu')]
                         ])
                     );
                 }
-                
-                session.user = users[username];
-                session.usernameKey = username;
-                session.loginAttempts = 0;
+                session.user = users[text];
+                session.usernameKey = text;
                 session.step = 'loginPassword';
-                
-                return ctx.reply(
-                    `👋 Welcome back, ${session.user.firstName}!\n\n` +
-                    `Please enter your password:`,
-                    Markup.inlineKeyboard([
-                        [Markup.button.callback('🔑 Forgot Password?', 'forgotPassword')]
-                    ])
-                );
+                return ctx.reply('Enter password:');
 
             case 'loginPassword':
-                if (hashPassword(text) !== session.user.password) {
-                    session.loginAttempts = (session.loginAttempts || 0) + 1;
-                    
-                    if (session.loginAttempts >= 3) {
-                        delete sessions[chatId];
-                        return ctx.reply(
-                            '❌ Too many failed attempts. Please try again later.\n\n' +
-                            'For security, your session has been terminated.',
-                            Markup.inlineKeyboard([
-                                [Markup.button.callback('📞 Contact Support', 'contactSupport')]
-                            ])
-                        );
-                    }
-                    
-                    const remaining = 3 - session.loginAttempts;
-                    return ctx.reply(
-                        `❌ Incorrect password. ${remaining} attempt${remaining > 1 ? 's' : ''} remaining.\n\n` +
-                        'Please enter your password again:'
-                    );
-                }
-                
-                // Successful login
+                if (text !== session.user.password) return ctx.reply('Incorrect password.');
+
                 sessions[chatId] = { user: session.user, usernameKey: session.usernameKey };
-                
-                // Update last login
-                session.user.lastLogin = {
-                    date: getCurrentDateTime().date,
-                    time: getCurrentDateTime().time,
-                    ip: ctx.from.id.toString()
-                };
-                saveUsers();
-                
-                return ctx.replyWithPhoto(
-                    { url: 'https://via.placeholder.com/600x200/4CAF50/FFFFFF?text=Login+Successful' },
-                    {
-                        caption: `🎉 *Login Successful!*\n\n` +
-                                `Welcome back, ${session.user.firstName}!\n\n` +
-                                `📊 *Account Status:*\n` +
-                                `• Balance: ${session.user.balance || 0} PKR\n` +
-                                `• Member Since: ${session.user.registered}\n` +
-                                `• Last Login: ${session.user.lastLogin?.date || 'First time'}\n\n` +
-                                `What would you like to do today?`,
-                        parse_mode: 'Markdown',
-                        reply_markup: withBackButton([
-                            [Markup.button.callback('💰 Check Balance', 'checkBalance')],
-                            [Markup.button.callback('🤖 Buy WhatsApp Bot', 'buyBot')],
-                            [Markup.button.callback('📥 Deposit Funds', 'depositBalance')],
-                            [Markup.button.callback('📤 Withdraw Funds', 'withdrawBalance')],
-                            [Markup.button.callback('👥 Refer & Earn', 'referFriends')],
-                            [Markup.button.callback('⚙️ Account Settings', 'accountSettings')]
-                        ]).reply_markup
-                    }
+
+                return ctx.reply(
+                    `Dear ${session.user.firstName}, Welcome To Paid WhatsApp Bot`,
+                    withBackButton([
+                        [Markup.button.callback('Check Balance', 'checkBalance')],
+                        [Markup.button.callback('Buy Bot', 'buyBot')],
+                        [Markup.button.callback('Deposit Balance', 'depositBalance')],
+                        [Markup.button.callback('Withdraw Balance', 'withdrawBalance')],
+                        [Markup.button.callback('Log Out', 'logOut')]
+                    ])
                 );
         }
         return;
     }
-});
 
-// ===== GENDER SELECTION =====
-bot.action(/gender_(male|female|other)/, async (ctx) => {
-    const chatId = ctx.chat.id;
-    const session = sessions[chatId];
-    if (!session || session.flow !== 'signup') return;
-    
-    const gender = ctx.match[1];
-    const genderMap = { male: 'Male', female: 'Female', other: 'Prefer not to say' };
-    
-    session.data.gender = genderMap[gender];
-    session.step = 'phone';
-    
-    await ctx.answerCbQuery();
-    await ctx.reply(
-        `✅ Gender: ${session.data.gender}\n\n` +
-        `Enter your *Pakistan Mobile Number*:\n` +
-        `Format: 03001234567 or +923001234567\n\n` +
-        `📱 This will be used for:\n` +
-        `• Account verification\n` +
-        `• Withdrawal processing\n` +
-        `• Security alerts`,
-        { parse_mode: 'Markdown' }
-    );
-});
-
-// ===== TERMS AGREEMENT =====
-bot.action('agreeTerms', async (ctx) => {
-    const chatId = ctx.chat.id;
-    const session = sessions[chatId];
-    if (!session || session.flow !== 'signup') return;
-    
-    // Generate user data
-    const userData = session.data;
-    const { date, time } = getCurrentDateTime();
-    
-    // Generate unique IDs
-    const userId = generateUserId();
-    const referralCode = generateReferralCode();
-    
-    // Create user object
-    users[userData.username] = {
-        userId: userId,
-        referralCode: referralCode,
-        firstName: userData.firstName,
-        lastName: userData.lastName || '',
-        fullName: userData.firstName + (userData.lastName ? ' ' + userData.lastName : ''),
-        dob: userData.dob,
-        age: userData.age,
-        gender: userData.gender || 'Not specified',
-        phone: userData.phone,
-        email: userData.email || '',
-        username: userData.username,
-        password: userData.password,
-        registered: date,
-        registrationTime: time,
-        balance: 0,
-        bonusBalance: 0,
-        level: 'Basic',
-        status: 'active',
-        verified: false,
-        referralCount: 0,
-        referralEarnings: 0,
-        transactions: [],
-        pendingDeposits: [],
-        pendingWithdrawals: [],
-        processedRequests: {},
-        lastLogin: null,
-        accountSettings: {
-            notifications: true,
-            twoFA: false,
-            autoLogout: true
+    // ===== ADMIN REJECTION REASON =====
+    if (session.flow === 'admin_reject_reason') {
+        const rejectionData = pendingAdminRejections[chatId];
+        if (!rejectionData) {
+            session.flow = null;
+            return ctx.reply('Rejection data not found.');
         }
-    };
-    
-    // Apply referral bonus if exists
-    if (session.referralCode) {
-        const referrer = Object.values(users).find(u => u.referralCode === session.referralCode);
-        if (referrer) {
-            referrer.referralCount = (referrer.referralCount || 0) + 1;
-            referrer.referralEarnings = (referrer.referralEarnings || 0) + 50;
-            referrer.bonusBalance = (referrer.bonusBalance || 0) + 50;
+
+        const { requestType, userChatId, requestId } = rejectionData;
+        const reason = text;
+
+        // Remove from pending
+        delete pendingAdminRejections[chatId];
+        session.flow = null;
+
+        // Process the rejection with reason
+        if (requestType === 'deposit') {
+            await processDepositRejection(userChatId, requestId, reason, ctx);
+        } else if (requestType === 'withdraw') {
+            await processWithdrawRejection(userChatId, requestId, reason, ctx);
+        }
+
+        return;
+    }
+
+    // ======= DEPOSIT FLOW =======
+    if (session.flow === 'deposit') {
+        const user = users[session.usernameKey];
+        
+        // Step 1: Enter Amount
+        if (session.step === 'enterAmount') {
+            const amount = parseInt(text);
+
+            if (isNaN(amount)) {
+                return ctx.reply('❌ Please enter numbers only.');
+            }
+
+            if (amount < 100) {
+                return ctx.reply('❌ Minimum deposit amount is 100 PKR.');
+            }
+
+            if (amount > 5000) {
+                return ctx.reply('❌ Maximum deposit amount is 5000 PKR per transaction.');
+            }
+
+            // Check daily deposit limit
+            const today = getCurrentDateTime().date;
+            if (!user.dailyDeposits) user.dailyDeposits = { date: today, count: 0, amount: 0 };
             
-            // Add to transactions
-            referrer.transactions.push({
-                type: 'Referral Bonus ➕',
-                amount: 50,
-                date: date,
-                time: time,
-                referredUser: userData.username
-            });
+            if (user.dailyDeposits.date !== today) {
+                user.dailyDeposits = { date: today, count: 0, amount: 0 };
+            }
+
+            if (user.dailyDeposits.count >= 5) {
+                return ctx.reply('❌ Daily deposit limit (5 transactions) reached. Try again tomorrow.');
+            }
+
+            if (user.dailyDeposits.amount + amount > 20000) {
+                return ctx.reply(`❌ Daily deposit limit (20,000 PKR) exceeded. You can deposit maximum ${20000 - user.dailyDeposits.amount} PKR today.`);
+            }
+
+            session.depositAmount = amount;
+            session.step = 'enterProof';
+            
+            return ctx.reply(
+                `✅ Amount ${amount} PKR noted for deposit.\n\n` +
+                `📤 Please enter your Transaction ID/Proof:\n` +
+                `• Only TiD, TrX ID, Transaction ID\n` +
+                `• Screenshots are NOT accepted\n` +
+                `• Example: TXN1234567890`
+            );
+        }
+
+        // Step 2: Enter Proof
+        if (session.step === 'enterProof') {
+            const proofText = text.trim();
+            
+            if (!proofText || proofText.length < 5) {
+                return ctx.reply('❌ Invalid Transaction ID. Please enter a valid Transaction ID (minimum 5 characters).');
+            }
+
+            if (proofText.length > 100) {
+                return ctx.reply('❌ Transaction ID too long. Maximum 100 characters allowed.');
+            }
+
+            session.depositProof = proofText;
+            
+            // Show confirmation with ONLY Confirm button (NO Cancel button)
+            const bonus = Math.floor(session.depositAmount * 0.02);
+            const totalAmount = session.depositAmount + bonus;
+
+            return ctx.reply(
+                `📋 Deposit Request Summary:\n\n` +
+                `💰 Amount: ${session.depositAmount} PKR\n` +
+                `🎁 Bonus: ${bonus} PKR (2%)\n` +
+                `💵 Total to be added: ${totalAmount} PKR\n` +
+                `🏦 Method: ${session.depositMethod}\n` +
+                `📝 Transaction ID: ${proofText}\n\n` +
+                `Click "Confirm Deposit" to submit your request.`,
+                Markup.inlineKeyboard([
+                    [Markup.button.callback('✅ Confirm Deposit', 'confirmDeposit')]
+                ])
+            );
         }
     }
-    
-    saveUsers();
-    
-    // Clear session
-    sessions[chatId] = null;
-    
-    // Send welcome message to user
-    await ctx.replyWithPhoto(
-        { url: 'https://via.placeholder.com/600x300/4CAF50/FFFFFF?text=Account+Created+Successfully' },
-        {
-            caption: `🎉 *Account Created Successfully!*\n\n` +
-                    `Welcome to Paid WhatsApp Bot, ${userData.firstName}!\n\n` +
-                    `📋 *Account Details:*\n` +
-                    `• User ID: ${userId}\n` +
-                    `• Username: ${userData.username}\n` +
-                    `• Referral Code: ${referralCode}\n` +
-                    `• Registration: ${date} ${time}\n\n` +
-                    `✨ *Welcome Bonus:* 50 PKR\n\n` +
-                    `💰 *Account Balance:* 50 PKR\n\n` +
-                    `🔐 *Security Tips:*\n` +
-                    `• Never share your password\n` +
-                    `• Enable 2FA in settings\n` +
-                    `• Log out from public devices\n\n` +
-                    `🎁 *Refer friends and earn 50 PKR each!*`,
-            parse_mode: 'Markdown',
-            reply_markup: Markup.inlineKeyboard([
-                [Markup.button.callback('🚀 Go to Dashboard', 'goToDashboard')],
-                [Markup.button.callback('👥 Share Referral Link', 'shareReferral')],
-                [Markup.button.callback('⚙️ Account Settings', 'accountSettings')]
-            ]).reply_markup
+
+    // ======= WITHDRAW FLOW =======
+    if (session.flow === 'withdraw') {
+        const user = users[session.usernameKey];
+        
+        // Step 1: Enter Amount
+        if (session.step === 'enterAmount') {
+            const amount = parseInt(text);
+
+            if (isNaN(amount)) {
+                return ctx.reply('❌ Please enter numbers only.');
+            }
+
+            if (amount < 200) {
+                return ctx.reply('❌ Minimum withdrawal amount is 200 PKR.');
+            }
+
+            if (amount > 5000) {
+                return ctx.reply('❌ Maximum withdrawal amount is 5000 PKR per transaction.');
+            }
+
+            if (amount > user.balance) {
+                return ctx.reply(`❌ Insufficient balance. Your balance is ${user.balance} PKR.`);
+            }
+
+            // Check daily withdrawal limit
+            const today = getCurrentDateTime().date;
+            if (!user.dailyWithdrawals) user.dailyWithdrawals = { date: today, count: 0, amount: 0 };
+            
+            if (user.dailyWithdrawals.date !== today) {
+                user.dailyWithdrawals = { date: today, count: 0, amount: 0 };
+            }
+
+            if (user.dailyWithdrawals.count >= 3) {
+                return ctx.reply('❌ Daily withdrawal limit (3 transactions) reached. Try again tomorrow.');
+            }
+
+            session.withdrawAmount = amount;
+            session.step = 'selectMethod';
+            
+            return ctx.reply(
+                `✅ Amount ${amount} PKR noted.\n\n🏦 Select payment method for withdrawal:`,
+                Markup.inlineKeyboard([
+                    [Markup.button.callback('✈️ JazzCash', 'withdrawJazzCash')],
+                    [Markup.button.callback('🏦 EasyPaisa', 'withdrawEasyPaisa')],
+                    [Markup.button.callback('💳 U-Paisa', 'withdrawUPaisa')],
+                    [Markup.button.callback('⬅️ Back', 'backToMenu')]
+                ])
+            );
         }
-    );
-    
-    // Send notification to admin
-    const adminMsg = `
-🆕 *NEW ACCOUNT REGISTRATION*
 
-👤 *Personal Information:*
-• Name: ${userData.firstName} ${userData.lastName || ''}
-• DOB: ${userData.dob} (Age: ${userData.age})
-• Gender: ${userData.gender || 'Not specified'}
+        // Step 3: Enter Account Number (after method selection)
+        if (session.step === 'enterAccountNumber') {
+            const accountNumber = text.trim();
+            
+            // Validate Pakistan mobile number
+            if (!/^03\d{9}$/.test(accountNumber)) {
+                return ctx.reply('❌ Invalid account number. Must be 11 digits starting with 03 (e.g., 03001234567).');
+            }
 
-📞 *Contact Details:*
-• Phone: ${userData.phone}
-• Email: ${userData.email || 'Not provided'}
-• Username: ${userData.username}
-• User ID: ${userId}
+            session.withdrawAccount = accountNumber;
 
-📊 *Account Information:*
-• Referral Code: ${referralCode}
-• Registration: ${date} ${time}
-• IP/Telegram ID: ${ctx.from.id}
+            const processingFee = Math.max(10, Math.floor(session.withdrawAmount * 0.02));
+            const netAmount = session.withdrawAmount - processingFee;
 
-🔗 *Referral Info:*
-• Referred by: ${session.referralCode || 'Direct'}
-• Welcome Bonus: 50 PKR applied
-
-📲 Telegram: @${ctx.from.username || 'N/A'} [${ctx.from.first_name} ${ctx.from.last_name || ''}]
-    `;
-    
-    await bot.telegram.sendMessage(ADMIN_ID, adminMsg, { parse_mode: 'Markdown' });
+            // Show confirmation with ONLY Confirm button (NO Cancel button)
+            return ctx.reply(
+                `📋 Withdraw Request Summary:\n\n` +
+                `💰 Amount: ${session.withdrawAmount} PKR\n` +
+                `📉 Processing Fee: ${processingFee} PKR (2%)\n` +
+                `💵 Net Amount: ${netAmount} PKR\n` +
+                `🏦 Method: ${session.withdrawMethod}\n` +
+                `📱 Account: ${accountNumber}\n\n` +
+                `Click "Confirm Withdraw" to submit your request.`,
+                Markup.inlineKeyboard([
+                    [Markup.button.callback('✅ Confirm Withdraw', 'confirmWithdraw')]
+                ])
+            );
+        }
+    }
 });
 
-// ===== VIEW TERMS =====
-bot.action('viewTerms', async (ctx) => {
-    await ctx.reply(
-        `📄 *Terms & Conditions*\n\n` +
-        `1. **Account Security**\n` +
-        `   • You are responsible for keeping your password secure\n` +
-        `   • Report any unauthorized access immediately\n\n` +
-        `2. **Transactions**\n` +
-        `   • All transactions are final\n` +
-        `   • Refunds are subject to admin approval\n\n` +
-        `3. **Service Usage**\n` +
-        `   • Services must not be used for illegal activities\n` +
-        `   • We reserve the right to suspend accounts\n\n` +
-        `4. **Privacy**\n` +
-        `   • We protect your personal information\n` +
-        `   • Data is used only for service provision\n\n` +
-        `5. **Amendments**\n` +
-        `   • Terms may be updated periodically\n` +
-        `   • Continued use implies acceptance\n\n` +
-        `Do you agree to these terms?`,
-        {
-            parse_mode: 'Markdown',
-            reply_markup: Markup.inlineKeyboard([
-                [Markup.button.callback('✅ I Agree', 'agreeTerms')],
-                [Markup.button.callback('❌ Cancel', 'cancelSignup')]
-            ]).reply_markup
-        }
-    );
-});
+// ===== BUTTON ACTIONS =====
 
-// ===== CANCEL SIGNUP =====
-bot.action('cancelSignup', async (ctx) => {
-    const chatId = ctx.chat.id;
-    delete sessions[chatId];
+// --- Check Balance + View Transactions
+bot.action('checkBalance', async (ctx) => {
+    const session = sessions[ctx.chat.id];
+    if (!session || !session.usernameKey) return ctx.reply('Please login first.');
+
+    const user = users[session.usernameKey];
+    const { date, time } = getCurrentDateTime();
     
-    await ctx.reply(
-        '❌ Account registration cancelled.\n\n' +
-        'If you change your mind, you can register anytime.',
+    let message = `Dear Customer, Your Account Balance Is: ${user.balance || 0} PKR\n`;
+    message += `On Account: ${user.firstName}\n`;
+    message += `Date: ${date} Time: ${time}\n\n`;
+    
+    // Show daily limits
+    const today = getCurrentDateTime().date;
+    if (user.dailyDeposits && user.dailyDeposits.date === today) {
+        message += `📊 Today's Deposit: ${user.dailyDeposits.amount}/20,000 PKR (${user.dailyDeposits.count}/5 transactions)\n`;
+    }
+    
+    if (user.dailyWithdrawals && user.dailyWithdrawals.date === today) {
+        message += `📊 Today's Withdrawal: ${user.dailyWithdrawals.amount}/15,000 PKR (${user.dailyWithdrawals.count}/3 transactions)\n`;
+    }
+
+    return ctx.reply(
+        message,
         Markup.inlineKeyboard([
-            [Markup.button.callback('📝 Try Again', 'signup')],
-            [Markup.button.callback('🏠 Home', 'backToMenu')]
+            [Markup.button.callback('📜 View Transaction History', 'viewTransactions')],
+            [Markup.button.callback('📋 Pending Requests', 'viewPendingRequests')],
+            [Markup.button.callback('⬅️ Back', 'backToMenu')]
         ])
     );
 });
 
-// ===== GO TO DASHBOARD =====
-bot.action('goToDashboard', async (ctx) => {
+// --- View Pending Requests
+bot.action('viewPendingRequests', async (ctx) => {
+    const session = sessions[ctx.chat.id];
+    if (!session || !session.usernameKey) return ctx.reply('Please login first.');
+
+    const user = users[session.usernameKey];
+    let message = '⏳ Pending Requests:\n\n';
+    
+    let hasPending = false;
+    
+    if (user.pendingDeposits && user.pendingDeposits.length > 0) {
+        hasPending = true;
+        message += '💰 Pending Deposits:\n';
+        user.pendingDeposits.forEach((d, i) => {
+            message += `${i + 1}. ${d.amount} PKR via ${d.method} - ${d.status || 'Pending'}\n`;
+            message += `   ID: ${d.id}\n`;
+        });
+        message += '\n';
+    }
+    
+    if (user.pendingWithdrawals && user.pendingWithdrawals.length > 0) {
+        hasPending = true;
+        message += '💸 Pending Withdrawals:\n';
+        user.pendingWithdrawals.forEach((w, i) => {
+            message += `${i + 1}. ${w.amount} PKR to ${w.account} - ${w.status || 'Pending'}\n`;
+            message += `   ID: ${w.id}\n`;
+        });
+    }
+    
+    if (!hasPending) {
+        message = '✅ No pending requests.';
+    }
+
+    return ctx.reply(message, withBackButton([]));
+});
+
+// --- Deposit Balance (Select Payment Method)
+bot.action('depositBalance', async (ctx) => {
+    const session = sessions[ctx.chat.id];
+    if (!session || !session.usernameKey) return ctx.reply('Please login first.');
+
+    sessions[ctx.chat.id].flow = 'deposit';
+    sessions[ctx.chat.id].step = null;
+
+    await ctx.reply(
+        'Select Your Payment Deposit Method:',
+        Markup.inlineKeyboard([
+            [Markup.button.callback('✈️ JazzCash', 'depositJazzCash')],
+            [Markup.button.callback('🏦 EasyPaisa', 'depositEasyPaisa')],
+            [Markup.button.callback('💳 U-Paisa', 'depositUPaisa')],
+            [Markup.button.callback('⬅️ Back', 'backToMenu')]
+        ])
+    );
+});
+
+// ===== Deposit Payment Method Selected =====
+bot.action(/deposit(JazzCash|EasyPaisa|UPaisa)/, async (ctx) => {
+    const session = sessions[ctx.chat.id];
+    if (!session || !session.usernameKey) return ctx.reply('Please login first.');
+
+    const method = ctx.match[1];
+    session.depositMethod = method;
+    session.flow = 'deposit';
+    session.step = 'enterAmount';
+
+    const accountType = method === 'UPaisa' ? 'U-Paisa' : method;
+
+    await ctx.reply(
+        `💰 You selected ${accountType} for deposit.\n\n` +
+        `📤 Please send payment to:\n\n` +
+        `Account Title: M Hadi\n` +
+        `Account Number: 03000382844\n` +
+        `Account Type: ${accountType}\n\n` +
+        `💵 Enter the amount you are sending (PKR):\n` +
+        `• Minimum: 100 PKR\n` +
+        `• Maximum: 5000 PKR\n` +
+        `• Daily Limit: 20,000 PKR (5 transactions)`
+    );
+});
+
+// --- Confirm Deposit (WITH DUPLICATE PREVENTION)
+bot.action('confirmDeposit', async (ctx) => {
     const chatId = ctx.chat.id;
     const session = sessions[chatId];
+    if (!session || !session.usernameKey) return ctx.answerCbQuery('Session expired.');
+
+    const user = users[session.usernameKey];
     
+    // Check if this request is already processed
+    const requestKey = `deposit_${session.depositAmount}_${session.depositProof}`;
+    if (user.processedRequests && user.processedRequests[requestKey]) {
+        return ctx.answerCbQuery('This request has already been submitted.', { show_alert: true });
+    }
+
+    const { date, time } = getCurrentDateTime();
+    
+    // Calculate bonus (2%)
+    const bonus = Math.floor(session.depositAmount * 0.02);
+    const totalAmount = session.depositAmount + bonus;
+    
+    // Generate unique deposit ID
+    const depositId = generateDepositId();
+    
+    // Update daily deposit count
+    if (!user.dailyDeposits) user.dailyDeposits = { date: date, count: 0, amount: 0 };
+    user.dailyDeposits.count += 1;
+    user.dailyDeposits.amount += session.depositAmount;
+    
+    // Add to pending deposits
+    if (!user.pendingDeposits) user.pendingDeposits = [];
+    user.pendingDeposits.push({
+        id: depositId,
+        amount: session.depositAmount,
+        bonus: bonus,
+        totalAmount: totalAmount,
+        method: session.depositMethod,
+        proof: session.depositProof,
+        date: date,
+        time: time,
+        status: 'pending'
+    });
+
+    // Mark as processed
+    if (!user.processedRequests) user.processedRequests = {};
+    user.processedRequests[requestKey] = true;
+    
+    saveUsers();
+    
+    // Send notification to admin
+    const adminMsg = `
+💰 DEPOSIT REQUEST
+👤 User: ${user.firstName} (${session.usernameKey})
+💵 Amount: ${session.depositAmount} PKR
+🎁 Bonus: ${bonus} PKR (2%)
+💰 Total: ${totalAmount} PKR
+🏦 Method: ${session.depositMethod}
+📝 Transaction ID: ${session.depositProof}
+📅 Date: ${date} ⏰ Time: ${time}
+📱 User Phone: ${user.phone}
+📊 Daily: ${user.dailyDeposits.count}/5 deposits (${user.dailyDeposits.amount}/20,000 PKR)
+    `;
+    
+    await bot.telegram.sendMessage(
+        ADMIN_ID,
+        adminMsg,
+        Markup.inlineKeyboard([
+            [Markup.button.callback('✅ Approve Deposit', `admin_approve_deposit_${chatId}_${depositId}`)],
+            [Markup.button.callback('❌ Reject', `admin_reject_deposit_${chatId}_${depositId}`)]
+        ])
+    );
+    
+    // Notify user
+    await ctx.reply(
+        `⏳ Deposit request submitted!\n\n` +
+        `📋 Details:\n` +
+        `• Amount: ${session.depositAmount} PKR\n` +
+        `• Bonus: ${bonus} PKR\n` +
+        `• Total to be added: ${totalAmount} PKR\n` +
+        `• Method: ${session.depositMethod}\n` +
+        `• Transaction ID: ${session.depositProof}\n` +
+        `• Status: Pending Admin Approval\n\n` +
+        `Request ID: ${depositId}\n` +
+        `You will be notified once processed.`,
+        withBackButton([])
+    );
+    
+    // Reset session
+    sessions[chatId].flow = null;
+    sessions[chatId].step = null;
+    delete session.depositAmount;
+    delete session.depositMethod;
+    delete session.depositProof;
+});
+
+// --- Withdraw Balance
+bot.action('withdrawBalance', async (ctx) => {
+    const session = sessions[ctx.chat.id];
+    if (!session || !session.usernameKey) return ctx.reply('Please login first.');
+
+    const user = users[session.usernameKey];
+    
+    // Check minimum balance
+    if (user.balance < 200) {
+        return ctx.reply('❌ Minimum balance required for withdrawal is 200 PKR.', withBackButton([]));
+    }
+
+    sessions[ctx.chat.id].flow = 'withdraw';
+    sessions[ctx.chat.id].step = 'enterAmount';
+
+    return ctx.reply(
+        `💰 Your current balance: ${user.balance} PKR\n\n` +
+        `💵 Enter amount to withdraw:\n` +
+        `• Minimum: 200 PKR\n` +
+        `• Maximum: 5000 PKR\n` +
+        `• Daily Limit: 3 transactions (15,000 PKR)`,
+        withBackButton([])
+    );
+});
+
+// ===== Withdraw Payment Method Selected =====
+bot.action(/withdraw(JazzCash|EasyPaisa|UPaisa)/, async (ctx) => {
+    const session = sessions[ctx.chat.id];
+    if (!session || !session.usernameKey) return ctx.reply('Please login first.');
+
+    const method = ctx.match[1];
+    session.withdrawMethod = method;
+    session.step = 'enterAccountNumber';
+
+    const accountType = method === 'UPaisa' ? 'U-Paisa' : method;
+    
+    return ctx.reply(
+        `🏦 You selected ${accountType} for withdrawal.\n\n` +
+        `📱 Enter your ${accountType} account number (11 digits, e.g., 03001234567):`
+    );
+});
+
+// --- Confirm Withdraw (WITH DUPLICATE PREVENTION)
+bot.action('confirmWithdraw', async (ctx) => {
+    const chatId = ctx.chat.id;
+    const session = sessions[chatId];
+    if (!session || !session.usernameKey) return ctx.answerCbQuery('Session expired.');
+
+    const user = users[session.usernameKey];
+    
+    // Check if this request is already processed
+    const requestKey = `withdraw_${session.withdrawAmount}_${session.withdrawAccount}`;
+    if (user.processedRequests && user.processedRequests[requestKey]) {
+        return ctx.answerCbQuery('This request has already been submitted.', { show_alert: true });
+    }
+
+    const { date, time } = getCurrentDateTime();
+    
+    // Calculate processing fee
+    const processingFee = Math.max(10, Math.floor(session.withdrawAmount * 0.02));
+    const netAmount = session.withdrawAmount - processingFee;
+    
+    // Generate unique withdraw ID
+    const withdrawId = generateWithdrawId();
+    
+    // Hold the amount temporarily
+    user.balance -= session.withdrawAmount;
+    
+    // Add to pending withdrawals
+    if (!user.pendingWithdrawals) user.pendingWithdrawals = [];
+    user.pendingWithdrawals.push({
+        id: withdrawId,
+        amount: session.withdrawAmount,
+        netAmount: netAmount,
+        fee: processingFee,
+        method: session.withdrawMethod,
+        account: session.withdrawAccount,
+        date: date,
+        time: time,
+        status: 'pending'
+    });
+    
+    // Update daily withdrawal count
+    if (!user.dailyWithdrawals) user.dailyWithdrawals = { date: date, count: 0, amount: 0 };
+    user.dailyWithdrawals.count += 1;
+    user.dailyWithdrawals.amount += session.withdrawAmount;
+
+    // Mark as processed
+    if (!user.processedRequests) user.processedRequests = {};
+    user.processedRequests[requestKey] = true;
+    
+    saveUsers();
+    
+    // Send notification to admin
+    const adminMsg = `
+💸 WITHDRAWAL REQUEST
+👤 User: ${user.firstName} (${session.usernameKey})
+💰 Amount: ${session.withdrawAmount} PKR
+📉 Fee: ${processingFee} PKR
+💵 Net: ${netAmount} PKR
+🏦 Method: ${session.withdrawMethod}
+📱 Account: ${session.withdrawAccount}
+📅 Date: ${date} ⏰ Time: ${time}
+💳 Balance: ${user.balance} PKR
+📱 User Phone: ${user.phone}
+📊 Daily: ${user.dailyWithdrawals.count}/3 withdrawals (${user.dailyWithdrawals.amount}/15,000 PKR)
+    `;
+    
+    await bot.telegram.sendMessage(
+        ADMIN_ID,
+        adminMsg,
+        Markup.inlineKeyboard([
+            [Markup.button.callback('✅ Approve & Send', `admin_approve_withdraw_${chatId}_${withdrawId}`)],
+            [Markup.button.callback('❌ Reject', `admin_reject_withdraw_${chatId}_${withdrawId}`)]
+        ])
+    );
+    
+    // Notify user
+    await ctx.reply(
+        `⏳ Withdrawal request submitted!\n\n` +
+        `📋 Details:\n` +
+        `• Amount: ${session.withdrawAmount} PKR\n` +
+        `• Fee: ${processingFee} PKR\n` +
+        `• Net: ${netAmount} PKR\n` +
+        `• Method: ${session.withdrawMethod}\n` +
+        `• Account: ${session.withdrawAccount}\n` +
+        `• Status: Pending Admin Approval\n\n` +
+        `Request ID: ${withdrawId}\n` +
+        `You will be notified once processed.`,
+        withBackButton([])
+    );
+    
+    // Reset session
+    sessions[chatId].flow = null;
+    sessions[chatId].step = null;
+    delete session.withdrawAmount;
+    delete session.withdrawMethod;
+    delete session.withdrawAccount;
+});
+
+// --- Buy Bot (deduct 100 PKR)
+bot.action('buyBot', async (ctx) => {
+    const session = sessions[ctx.chat.id];
+    if (!session || !session.usernameKey) return ctx.reply('Please login first.');
+
+    const user = users[session.usernameKey];
+    const cost = 100;
+    if ((user.balance || 0) < cost) return ctx.reply(`❌ Not Enough Balance To Buy Bot (Cost: ${cost} PKR)`, withBackButton([]));
+
+    user.balance -= cost;
+    if (!user.transactions) user.transactions = [];
+    const { date, time } = getCurrentDateTime();
+    user.transactions.push({ type: 'Buy Bot ➖', amount: cost, date, time });
+
+    saveUsers();
+    return ctx.reply(`✅ Bot Purchased! ${cost} PKR Deducted`, withBackButton([]));
+});
+
+// --- View Transaction History
+bot.action('viewTransactions', async (ctx) => {
+    const session = sessions[ctx.chat.id];
+    if (!session || !session.usernameKey) return ctx.reply('Please login first.');
+
+    const user = users[session.usernameKey];
+    if (!user.transactions || user.transactions.length === 0) return ctx.reply('No transactions found.', withBackButton([]));
+
+    let historyMsg = '📜 Transaction History:\n\n';
+    user.transactions.forEach((t, i) => {
+        historyMsg += `${i + 1}. ${t.type}: ${t.amount} PKR on ${t.date} at ${t.time}\n`;
+        if (t.bonus) historyMsg += `   Bonus: +${t.bonus} PKR\n`;
+        if (t.fee) historyMsg += `   Fee: -${t.fee} PKR\n`;
+        if (t.netAmount) historyMsg += `   Net: ${t.netAmount} PKR\n`;
+        if (t.status) historyMsg += `   Status: ${t.status}\n`;
+        if (t.rejectionReason) historyMsg += `   Reason: ${t.rejectionReason}\n`;
+    });
+
+    return ctx.reply(historyMsg, withBackButton([]));
+});
+
+// --- Log Out
+bot.action('logOut', async (ctx) => {
+    sessions[ctx.chat.id] = null;
+    return ctx.reply('🔓 You have been logged out.', withBackButton([]));
+});
+
+// ======= BACK BUTTON =====
+bot.action('backToMenu', async (ctx) => {
+    const session = sessions[ctx.chat.id];
     if (!session || !session.usernameKey) {
         return ctx.reply(
-            'Please login first.',
+            '👋 Welcome!\n\nPlease Sign Up or Log In:',
             Markup.inlineKeyboard([
-                [Markup.button.callback('🔐 Login', 'login')],
-                [Markup.button.callback('📝 Sign Up', 'signup')]
+                Markup.button.callback('Sign Up', 'signup'),
+                Markup.button.callback('Log In', 'login')
+            ])
+        );
+    } else {
+        const user = users[session.usernameKey];
+        return ctx.reply(
+            `Dear ${user.firstName}, Welcome To Paid WhatsApp Bot`,
+            withBackButton([
+                [Markup.button.callback('Check Balance', 'checkBalance')],
+                [Markup.button.callback('Buy Bot', 'buyBot')],
+                [Markup.button.callback('Deposit Balance', 'depositBalance')],
+                [Markup.button.callback('Withdraw Balance', 'withdrawBalance')],
+                [Markup.button.callback('Log Out', 'logOut')]
             ])
         );
     }
-    
-    const user = users[session.usernameKey];
-    
-    return ctx.replyWithPhoto(
-        { url: 'https://via.placeholder.com/600x200/0088cc/FFFFFF?text=Account+Dashboard' },
-        {
-            caption: `📊 *Account Dashboard*\n\n` +
-                    `👤 *Profile:*\n` +
-                    `• Name: ${user.firstName} ${user.lastName || ''}\n` +
-                    `• User ID: ${user.userId}\n` +
-                    `• Level: ${user.level}\n` +
-                    `• Status: ${user.status}\n\n` +
-                    `💰 *Financial:*\n` +
-                    `• Main Balance: ${user.balance} PKR\n` +
-                    `• Bonus Balance: ${user.bonusBalance || 0} PKR\n` +
-                    `• Total Earnings: ${user.balance + (user.bonusBalance || 0)} PKR\n\n` +
-                    `📈 *Stats:*\n` +
-                    `• Referrals: ${user.referralCount || 0}\n` +
-                    `• Referral Earnings: ${user.referralEarnings || 0} PKR\n` +
-                    `• Member Since: ${user.registered}`,
-            parse_mode: 'Markdown',
-            reply_markup: withBackButton([
-                [Markup.button.callback('💰 Check Balance', 'checkBalance')],
-                [Markup.button.callback('🤖 Buy WhatsApp Bot', 'buyBot')],
-                [Markup.button.callback('📥 Deposit Funds', 'depositBalance')],
-                [Markup.button.callback('📤 Withdraw Funds', 'withdrawBalance')],
-                [Markup.button.callback('👥 Refer & Earn', 'referFriends')],
-                [Markup.button.callback('⚙️ Account Settings', 'accountSettings')],
-                [Markup.button.callback('📊 Transaction History', 'viewTransactions')]
-            ]).reply_markup
-        }
-    );
 });
 
-// ===== SHARE REFERRAL =====
-bot.action('shareReferral', async (ctx) => {
-    const chatId = ctx.chat.id;
-    const session = sessions[chatId];
-    
+// ======= HELPER FUNCTIONS =======
+async function processDepositRejection(userChatId, depositId, reason, adminCtx) {
+    const session = sessions[userChatId];
     if (!session || !session.usernameKey) {
-        return ctx.answerCbQuery('Please login first.');
+        await adminCtx.answerCbQuery('User not found.');
+        return;
     }
-    
-    const user = users[session.usernameKey];
-    const referralLink = `https://t.me/${ctx.botInfo.username}?start=${user.referralCode}`;
-    
-    await ctx.reply(
-        `👥 *Refer & Earn Program*\n\n` +
-        `Invite friends and earn *50 PKR* for each successful referral!\n\n` +
-        `🎁 *How it works:*\n` +
-        `1. Share your referral link\n` +
-        `2. Friend signs up using your link\n` +
-        `3. You get 50 PKR bonus\n` +
-        `4. Friend gets 50 PKR welcome bonus\n\n` +
-        `🔗 *Your Referral Link:*\n` +
-        `${referralLink}\n\n` +
-        `📋 *Your Referral Code:*\n` +
-        `${user.referralCode}\n\n` +
-        `📊 *Stats:*\n` +
-        `• Total Referrals: ${user.referralCount || 0}\n` +
-        `• Earnings from Referrals: ${user.referralEarnings || 0} PKR`,
-        {
-            parse_mode: 'Markdown',
-            reply_markup: Markup.inlineKeyboard([
-                [Markup.button.url('📱 Share on Telegram', `https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${encodeURIComponent('Join Paid WhatsApp Bot and earn money! Use my referral link:')}`)],
-                [Markup.button.callback('📊 View Referrals', 'viewReferrals')],
-                [Markup.button.callback('⬅️ Back', 'backToMenu')]
-            ]).reply_markup
-        }
-    );
-});
 
-// ===== ACCOUNT SETTINGS =====
-bot.action('accountSettings', async (ctx) => {
-    const chatId = ctx.chat.id;
-    const session = sessions[chatId];
-    
+    const user = users[session.usernameKey];
+    if (!user.pendingDeposits) {
+        await adminCtx.answerCbQuery('No pending deposits.');
+        return;
+    }
+
+    const depositIndex = user.pendingDeposits.findIndex(d => d.id === depositId);
+    if (depositIndex === -1) {
+        await adminCtx.answerCbQuery('Deposit already processed.');
+        return;
+    }
+
+    const deposit = user.pendingDeposits[depositIndex];
+    const { date, time } = getCurrentDateTime();
+
+    // Update daily deposit count
+    if (user.dailyDeposits) {
+        user.dailyDeposits.count = Math.max(0, user.dailyDeposits.count - 1);
+        user.dailyDeposits.amount = Math.max(0, user.dailyDeposits.amount - deposit.amount);
+    }
+
+    // Add to transaction history with reason
+    if (!user.transactions) user.transactions = [];
+    user.transactions.push({
+        type: `Deposit ❌ (Rejected)`,
+        amount: deposit.amount,
+        date: date,
+        time: time,
+        proof: deposit.proof,
+        status: 'rejected',
+        rejectionReason: reason
+    });
+
+    // Notify user with reason
+    await bot.telegram.sendMessage(
+        userChatId,
+        `❌ Deposit Rejected!\n\n` +
+        `💰 Amount: ${deposit.amount} PKR\n` +
+        `🏦 Method: ${deposit.method}\n` +
+        `📝 Transaction ID: ${deposit.proof}\n` +
+        `📅 Date: ${date} at ${time}\n\n` +
+        `❌ Rejection Reason:\n${reason}\n\n` +
+        `Contact admin for more information.`,
+        withBackButton([])
+    );
+
+    // Remove from pending
+    user.pendingDeposits.splice(depositIndex, 1);
+    saveUsers();
+
+    await adminCtx.editMessageText(`❌ Deposit Rejected\n\nUser: ${user.firstName}\nAmount: ${deposit.amount} PKR\nReason: ${reason}`);
+}
+
+async function processWithdrawRejection(userChatId, withdrawId, reason, adminCtx) {
+    const session = sessions[userChatId];
     if (!session || !session.usernameKey) {
-        return ctx.reply('Please login first to access settings.');
+        await adminCtx.answerCbQuery('User not found.');
+        return;
     }
-    
+
     const user = users[session.usernameKey];
-    
-    await ctx.reply(
-        `⚙️ *Account Settings*\n\n` +
-        `👤 *Profile Information:*\n` +
-        `• Name: ${user.firstName} ${user.lastName || ''}\n` +
-        `• Username: ${user.username}\n` +
-        `• Email: ${user.email || 'Not set'}\n` +
-        `• Phone: ${user.phone}\n\n` +
-        `🔐 *Security Settings:*\n` +
-        `• 2FA: ${user.accountSettings?.twoFA ? 'Enabled' : 'Disabled'}\n` +
-        `• Auto Logout: ${user.accountSettings?.autoLogout ? '15 mins' : 'Disabled'}\n` +
-        `• Notifications: ${user.accountSettings?.notifications ? 'Enabled' : 'Disabled'}\n\n` +
-        `Select an option to manage:`,
-        {
-            parse_mode: 'Markdown',
-            reply_markup: Markup.inlineKeyboard([
-                [Markup.button.callback('✏️ Edit Profile', 'editProfile')],
-                [Markup.button.callback('🔐 Change Password', 'changePassword')],
-                [Markup.button.callback('📧 Update Email', 'updateEmail')],
-                [Markup.button.callback('🔒 Security Settings', 'securitySettings')],
-                [Markup.button.callback('📱 Update Phone', 'updatePhone')],
-                [Markup.button.callback('📄 Account Statement', 'accountStatement')],
-                [Markup.button.callback('⬅️ Back to Dashboard', 'goToDashboard')]
-            ]).reply_markup
-        }
-    );
-});
-
-// ===== ABOUT SERVICES =====
-bot.action('aboutServices', async (ctx) => {
-    await ctx.reply(
-        `🤖 *About Our WhatsApp Bot Services*\n\n` +
-        `🌟 *Premium Features:*\n` +
-        `• Auto-reply system\n` +
-        `• Bulk messaging\n` +
-        `• Group management\n` +
-        `• Analytics dashboard\n` +
-        `• 24/7 support\n\n` +
-        `💰 *Pricing Plans:*\n` +
-        `• Basic: 100 PKR/month\n` +
-        `• Pro: 300 PKR/month\n` +
-        `• Business: 500 PKR/month\n\n` +
-        `📊 *Benefits:*\n` +
-        `• Increase efficiency\n` +
-        `• Save time\n` +
-        `• Professional communication\n` +
-        `• Detailed reports\n\n` +
-        `🎯 *Perfect For:*\n` +
-        `• Small businesses\n` +
-        `• Freelancers\n` +
-        `• Marketing agencies\n` +
-        `• Customer support\n\n` +
-        `Ready to get started?`,
-        {
-            parse_mode: 'Markdown',
-            reply_markup: Markup.inlineKeyboard([
-                [Markup.button.callback('🚀 Get Started', 'signup')],
-                [Markup.button.callback('📞 Contact Sales', 'contactSupport')],
-                [Markup.button.callback('⬅️ Back', 'backToMenu')]
-            ]).reply_markup
-        }
-    );
-});
-
-// ===== CONTACT SUPPORT =====
-bot.action('contactSupport', async (ctx) => {
-    await ctx.reply(
-        `📞 *Contact Support*\n\n` +
-        `We're here to help you 24/7!\n\n` +
-        `📱 *Support Channels:*\n` +
-        `• Telegram: @SupportBotHelp\n` +
-        `• Email: support@paidwhatsappbot.com\n` +
-        `• Phone: +92 300 382844\n\n` +
-        `⏰ *Business Hours:*\n` +
-        `Monday - Sunday: 24/7\n\n` +
-        `💡 *Before Contacting:*\n` +
-        `1. Check our FAQs\n` +
-        `2. Have your User ID ready\n` +
-        `3. Describe your issue clearly\n\n` +
-        `Need immediate assistance?`,
-        {
-            parse_mode: 'Markdown',
-            reply_markup: Markup.inlineKeyboard([
-                [Markup.button.url('💬 Live Chat', 'https://t.me/SupportBotHelp')],
-                [Markup.button.callback('❓ FAQs', 'viewFAQs')],
-                [Markup.button.callback('⬅️ Back', 'backToMenu')]
-            ]).reply_markup
-        }
-    );
-});
-
-// ===== LOGIN ACTION =====
-bot.action('login', async (ctx) => {
-    sessions[ctx.chat.id] = { flow: 'login', step: 'loginUsername' };
-    
-    await ctx.reply(
-        `🔐 *Account Login*\n\n` +
-        `Please enter your *Username*:\n\n` +
-        `📝 *Don't have an account?*\n` +
-        `Create one now to get 50 PKR welcome bonus!`,
-        {
-            parse_mode: 'Markdown',
-            reply_markup: Markup.inlineKeyboard([
-                [Markup.button.callback('📝 Create Account', 'signup')]
-            ]).reply_markup
-        }
-    );
-});
-
-// ===== FORGOT PASSWORD =====
-bot.action('forgotPassword', async (ctx) => {
-    await ctx.reply(
-        `🔑 *Password Recovery*\n\n` +
-        `Please contact our support team for password reset:\n\n` +
-        `📞 Support: @SupportBotHelp\n` +
-        `📧 Email: support@paidwhatsappbot.com\n\n` +
-        `For security reasons, password reset requires:\n` +
-        `• Account verification\n` +
-        `• Email/Phone confirmation\n` +
-        `• Security questions\n\n` +
-        `We'll help you regain access quickly!`,
-        {
-            parse_mode: 'Markdown',
-            reply_markup: Markup.inlineKeyboard([
-                [Markup.button.url('📱 Contact Support', 'https://t.me/SupportBotHelp')],
-                [Markup.button.callback('⬅️ Back to Login', 'login')]
-            ]).reply_markup
-        }
-    );
-});
-
-// ===== BACK TO MENU =====
-bot.action('backToMenu', async (ctx) => {
-    const chatId = ctx.chat.id;
-    const session = sessions[chatId];
-    
-    if (!session || !session.usernameKey) {
-        return ctx.reply(
-            '🌟 *Welcome to Paid WhatsApp Bot* 🌟\n\nChoose an option:',
-            {
-                parse_mode: 'Markdown',
-                reply_markup: Markup.inlineKeyboard([
-                    [Markup.button.callback('📝 Create Account', 'signup')],
-                    [Markup.button.callback('🔐 Login to Account', 'login')],
-                    [Markup.button.callback('ℹ️ About Services', 'aboutServices')],
-                    [Markup.button.callback('📞 Contact Support', 'contactSupport')]
-                ]).reply_markup
-            }
-        );
+    if (!user.pendingWithdrawals) {
+        await adminCtx.answerCbQuery('No pending withdrawals.');
+        return;
     }
+
+    const withdrawIndex = user.pendingWithdrawals.findIndex(w => w.id === withdrawId);
+    if (withdrawIndex === -1) {
+        await adminCtx.answerCbQuery('Withdrawal already processed.');
+        return;
+    }
+
+    const withdraw = user.pendingWithdrawals[withdrawIndex];
+    const { date, time } = getCurrentDateTime();
+
+    // Return balance to user
+    user.balance += withdraw.amount;
     
-    const user = users[session.usernameKey];
-    
-    return ctx.replyWithPhoto(
-        { url: 'https://via.placeholder.com/600x200/0088cc/FFFFFF?text=Welcome+Back' },
-        {
-            caption: `👋 Welcome Back, ${user.firstName}!\n\n` +
-                    `What would you like to do today?`,
-            reply_markup: withBackButton([
-                [Markup.button.callback('💰 Check Balance', 'checkBalance')],
-                [Markup.button.callback('🤖 Buy WhatsApp Bot', 'buyBot')],
-                [Markup.button.callback('📥 Deposit Funds', 'depositBalance')],
-                [Markup.button.callback('📤 Withdraw Funds', 'withdrawBalance')],
-                [Markup.button.callback('👥 Refer & Earn', 'referFriends')],
-                [Markup.button.callback('⚙️ Account Settings', 'accountSettings')]
-            ]).reply_markup
-        }
+    // Update daily withdrawal count
+    if (user.dailyWithdrawals) {
+        user.dailyWithdrawals.count = Math.max(0, user.dailyWithdrawals.count - 1);
+        user.dailyWithdrawals.amount = Math.max(0, user.dailyWithdrawals.amount - withdraw.amount);
+    }
+
+    // Add to transaction history with reason
+    if (!user.transactions) user.transactions = [];
+    user.transactions.push({
+        type: `Withdrawal ❌ (Rejected)`,
+        amount: withdraw.amount,
+        date: date,
+        time: time,
+        account: withdraw.account,
+        status: 'rejected',
+        rejectionReason: reason
+    });
+
+    // Notify user with reason
+    await bot.telegram.sendMessage(
+        userChatId,
+        `❌ Withdrawal Rejected!\n\n` +
+        `💰 Amount: ${withdraw.amount} PKR\n` +
+        `🏦 Method: ${withdraw.method}\n` +
+        `📱 Account: ${withdraw.account}\n` +
+        `📅 Date: ${date} at ${time}\n\n` +
+        `❌ Rejection Reason:\n${reason}\n\n` +
+        `Your balance has been restored.\n` +
+        `Current Balance: ${user.balance} PKR`,
+        withBackButton([])
     );
+
+    // Remove from pending
+    user.pendingWithdrawals.splice(withdrawIndex, 1);
+    saveUsers();
+
+    await adminCtx.editMessageText(`❌ Withdrawal Rejected\n\nUser: ${user.firstName}\nAmount: ${withdraw.amount} PKR returned to balance.\nReason: ${reason}`);
+}
+
+// ======= ADMIN APPROVAL FOR DEPOSITS =======
+bot.action(/admin_approve_deposit_(\d+)_(dep_\d+_\d+)/, async (ctx) => {
+    const [_, userChatId, depositId] = ctx.match;
+    const session = sessions[userChatId];
+    if (!session || !session.usernameKey) return ctx.answerCbQuery('User not found.');
+
+    const user = users[session.usernameKey];
+    if (!user.pendingDeposits) return ctx.answerCbQuery('No pending deposits.');
+
+    const depositIndex = user.pendingDeposits.findIndex(d => d.id === depositId);
+    if (depositIndex === -1) return ctx.answerCbQuery('Deposit already processed.');
+
+    const deposit = user.pendingDeposits[depositIndex];
+    const { date, time } = getCurrentDateTime();
+
+    // Add balance with bonus
+    user.balance += deposit.totalAmount;
+    
+    // Add to transaction history
+    if (!user.transactions) user.transactions = [];
+    user.transactions.push({
+        type: `Deposit ➕ (${deposit.method})`,
+        amount: deposit.amount,
+        bonus: deposit.bonus,
+        totalAmount: deposit.totalAmount,
+        date: date,
+        time: time,
+        proof: deposit.proof,
+        status: 'approved'
+    });
+
+    saveUsers();
+
+    // Notify user
+    await bot.telegram.sendMessage(
+        userChatId,
+        `✅ Deposit Approved!\n\n` +
+        `💰 Amount: ${deposit.amount} PKR\n` +
+        `🎁 Bonus: ${deposit.bonus} PKR\n` +
+        `💵 Total Added: ${deposit.totalAmount} PKR\n` +
+        `🏦 Method: ${deposit.method}\n` +
+        `📝 Transaction ID: ${deposit.proof}\n` +
+        `📅 Date: ${date} at ${time}\n\n` +
+        `New Balance: ${user.balance} PKR`,
+        withBackButton([])
+    );
+
+    // Remove from pending
+    user.pendingDeposits.splice(depositIndex, 1);
+    saveUsers();
+
+    await ctx.editMessageText(`✅ Deposit Approved\n\nUser: ${user.firstName}\nAmount: ${deposit.totalAmount} PKR added (${deposit.amount} + ${deposit.bonus} bonus)`);
+});
+
+bot.action(/admin_reject_deposit_(\d+)_(dep_\d+_\d+)/, async (ctx) => {
+    const [_, userChatId, depositId] = ctx.match;
+    
+    // Store rejection data and ask for reason
+    const adminSession = sessions[ctx.chat.id] || {};
+    adminSession.flow = 'admin_reject_reason';
+    sessions[ctx.chat.id] = adminSession;
+    
+    pendingAdminRejections[ctx.chat.id] = {
+        requestType: 'deposit',
+        userChatId: userChatId,
+        requestId: depositId
+    };
+    
+    await ctx.answerCbQuery();
+    await ctx.reply('📝 Please enter the reason for rejecting this deposit request:');
+});
+
+// ======= ADMIN APPROVAL FOR WITHDRAWALS =======
+bot.action(/admin_approve_withdraw_(\d+)_(wd_\d+_\d+)/, async (ctx) => {
+    const [_, userChatId, withdrawId] = ctx.match;
+    const session = sessions[userChatId];
+    if (!session || !session.usernameKey) return ctx.answerCbQuery('User not found.');
+
+    const user = users[session.usernameKey];
+    if (!user.pendingWithdrawals) return ctx.answerCbQuery('No pending withdrawals.');
+
+    const withdrawIndex = user.pendingWithdrawals.findIndex(w => w.id === withdrawId);
+    if (withdrawIndex === -1) return ctx.answerCbQuery('Withdrawal already processed.');
+
+    const withdraw = user.pendingWithdrawals[withdrawIndex];
+    const { date, time } = getCurrentDateTime();
+
+    // Update withdrawal status
+    withdraw.status = 'approved';
+    withdraw.approvedDate = date;
+    withdraw.approvedTime = time;
+
+    // Add to transaction history
+    if (!user.transactions) user.transactions = [];
+    user.transactions.push({
+        type: `Withdrawal ➖ (${withdraw.method})`,
+        amount: withdraw.amount,
+        netAmount: withdraw.netAmount,
+        fee: withdraw.fee,
+        date: date,
+        time: time,
+        account: withdraw.account,
+        status: 'approved'
+    });
+
+    saveUsers();
+
+    // Notify user
+    await bot.telegram.sendMessage(
+        userChatId,
+        `✅ Withdrawal Approved!\n\n` +
+        `💰 Amount: ${withdraw.amount} PKR\n` +
+        `📉 Fee: ${withdraw.fee} PKR\n` +
+        `💵 Net Sent: ${withdraw.netAmount} PKR\n` +
+        `🏦 To: ${withdraw.account} (${withdraw.method})\n` +
+        `📅 Date: ${date} at ${time}\n\n` +
+        `Your funds have been sent to your account.`,
+        withBackButton([])
+    );
+
+    // Remove from pending
+    user.pendingWithdrawals.splice(withdrawIndex, 1);
+    saveUsers();
+
+    await ctx.editMessageText(`✅ Withdrawal Approved & Amount Sent\n\nUser: ${user.firstName}\nAmount: ${withdraw.netAmount} PKR sent to ${withdraw.account}`);
+});
+
+bot.action(/admin_reject_withdraw_(\d+)_(wd_\d+_\d+)/, async (ctx) => {
+    const [_, userChatId, withdrawId] = ctx.match;
+    
+    // Store rejection data and ask for reason
+    const adminSession = sessions[ctx.chat.id] || {};
+    adminSession.flow = 'admin_reject_reason';
+    sessions[ctx.chat.id] = adminSession;
+    
+    pendingAdminRejections[ctx.chat.id] = {
+        requestType: 'withdraw',
+        userChatId: userChatId,
+        requestId: withdrawId
+    };
+    
+    await ctx.answerCbQuery();
+    await ctx.reply('📝 Please enter the reason for rejecting this withdrawal request:');
 });
 
 // ===== LAUNCH =====
 bot.launch();
-console.log('🤖 Professional WhatsApp Bot is running...');
+console.log('Bot running...');
+
+
+اس میں جو سائن اپ اور لاگ ان کا جو فلو ہے اس مزید بہتر بناؤ میرا تو سمپل ہے آپ سے پروفیشنل بنا  اس پروفیشنل بنانے کے لیے پہلے سادہ الفاظ میں بتاؤ کیا کرو گے 
