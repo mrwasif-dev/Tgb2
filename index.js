@@ -276,6 +276,46 @@ Please send your payment proof Only TiD , TrX ID , Transaction ID (Screenshot �
             return;
         }
     }
+
+    // ======= WITHDRAW FLOW =======
+    if (session.flow === 'withdraw') {
+        // Step 1: Enter Account Number
+        if (session.step === 'enterAccountNumber') {
+            session.withdrawAccountNumber = text;
+            session.step = 'enterAmount';
+            return ctx.reply('💵 Enter the amount you want to withdraw (PKR):');
+        }
+
+        // Step 2: Enter Amount
+        if (session.step === 'enterAmount') {
+            const amount = parseInt(text);
+            const user = users[session.usernameKey];
+            if (isNaN(amount)) return ctx.reply('❌ Please enter numbers only.');
+            if (amount < 100 || amount > 5000) return ctx.reply('❌ Amount must be between 100 and 5000 PKR.');
+            if ((user.balance || 0) < amount) return ctx.reply('❌ Not enough balance to withdraw.');
+
+            session.withdrawAmount = amount;
+            session.step = null; // waiting for admin
+
+            await ctx.reply('⏳ Your fund withdrawal request is noted. Please wait for admin approval.', withBackButton([]));
+
+            const { date, time } = getCurrentDateTime();
+            const adminMsg = `💰 Withdrawal Request 👤 User: ${user.firstName} (Username: ${session.usernameKey})
+💵 Amount: ${amount} PKR
+🏦 Account: ${session.withdrawAccountNumber} (${session.withdrawMethod})
+📅 Date: ${date} Time: ${time}`;
+
+            await bot.telegram.sendMessage(
+                ADMIN_ID,
+                adminMsg,
+                Markup.inlineKeyboard([
+                    Markup.button.callback(`✅ Approve`, `withdraw_approve_${ctx.chat.id}_${Date.now()}`),
+                    Markup.button.callback(`❌ Reject`, `withdraw_reject_${ctx.chat.id}_${Date.now()}`)
+                ])
+            );
+            return;
+        }
+    }
 });
 
 // ===== BUTTON ACTIONS =====
@@ -339,40 +379,38 @@ Account Type: ${accountType}`
     await ctx.reply('💵 Enter your amount you are sending (PKR):');
 });
 
-// --- Withdraw Balance
+// --- Withdraw Balance (Select Account)
 bot.action('withdrawBalance', async (ctx) => {
     const session = sessions[ctx.chat.id];
     if (!session || !session.usernameKey) return ctx.reply('Please login first.');
 
-    const user = users[session.usernameKey];
-    const amount = 200; // example withdraw
-    if ((user.balance || 0) < amount) return ctx.reply(`❌ Not Enough Balance To Withdraw ${amount} PKR`, withBackButton([]));
+    sessions[ctx.chat.id].flow = 'withdraw';
+    sessions[ctx.chat.id].step = null;
 
-    user.balance -= amount;
-    if (!user.transactions) user.transactions = [];
-    const { date, time } = getCurrentDateTime();
-    user.transactions.push({ type: 'Withdraw ➖', amount, date, time });
-
-    saveUsers();
-    return ctx.reply(`✅ ${amount} PKR Withdrawn Successfully`, withBackButton([]));
+    await ctx.reply(
+        'Select the account you want to withdraw to:',
+        Markup.inlineKeyboard([
+            [Markup.button.callback('✈️ JazzCash', 'withdrawJazzCash')],
+            [Markup.button.callback('🏦 EasyPaisa', 'withdrawEasyPaisa')],
+            [Markup.button.callback('💳 U-Paisa', 'withdrawUPaisa')],
+            [Markup.button.callback('⬅️ Back', 'backToMenu')]
+        ])
+    );
 });
 
-// --- Buy Bot (deduct 100 PKR)
-bot.action('buyBot', async (ctx) => {
+// ===== Withdraw Payment Method Selected =====
+bot.action(/withdraw(JazzCash|EasyPaisa|UPaisa)/, async (ctx) => {
     const session = sessions[ctx.chat.id];
     if (!session || !session.usernameKey) return ctx.reply('Please login first.');
 
-    const user = users[session.usernameKey];
-    const cost = 100;
-    if ((user.balance || 0) < cost) return ctx.reply(`❌ Not Enough Balance To Buy Bot (Cost: ${cost} PKR)`, withBackButton([]));
+    const method = ctx.match[1];
+    session.withdrawMethod = method;
+    session.flow = 'withdraw';
+    session.step = 'enterAccountNumber';
 
-    user.balance -= cost;
-    if (!user.transactions) user.transactions = [];
-    const { date, time } = getCurrentDateTime();
-    user.transactions.push({ type: 'Buy Bot ➖', amount: cost, date, time });
+    const accountType = method === 'UPaisa' ? 'U-Paisa' : method;
 
-    saveUsers();
-    return ctx.reply(`✅ Bot Purchased! ${cost} PKR Deducted`, withBackButton([]));
+    await ctx.reply(`💰 You selected ${accountType}. Please enter your account number:`);
 });
 
 // --- View Transaction History
@@ -443,33 +481,3 @@ bot.action(/approve_(\d+)_(dep_\d+_\d+)/, async (ctx) => {
         date,
         time,
         proof: deposit.proof
-    });
-    saveUsers();
-
-    await bot.telegram.sendMessage(userChatId, `✅ Your fund of ${deposit.amount} PKR has been approved!`, withBackButton([]));
-
-    // remove processed deposit
-    session.pendingDeposits = session.pendingDeposits.filter(d => d.id !== depositId);
-
-    await ctx.editMessageText('✅ Deposit Approved ✅');
-});
-
-bot.action(/reject_(\d+)_(dep_\d+_\d+)/, async (ctx) => {
-    const [_, userChatId, depositId] = ctx.match;
-    const session = sessions[userChatId];
-    if (!session || !session.pendingDeposits) return ctx.answerCbQuery('No pending deposit.');
-
-    const deposit = session.pendingDeposits.find(d => d.id === depositId);
-    if (!deposit) return ctx.answerCbQuery('Deposit already processed.');
-
-    await bot.telegram.sendMessage(userChatId, `❌ Your deposit of ${deposit.amount} PKR has been rejected.`, withBackButton([]));
-
-    // remove processed deposit
-    session.pendingDeposits = session.pendingDeposits.filter(d => d.id !== depositId);
-
-    await ctx.editMessageText('❌ Deposit Rejected ❌');
-});
-
-// ===== LAUNCH =====
-bot.launch();
-console.log('Bot running...');
