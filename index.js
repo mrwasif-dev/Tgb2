@@ -218,11 +218,18 @@ bot.on('text', async (ctx) => {
         // Step 1: Enter Amount
         if (session.step === 'enterAmount') {
             const amount = parseInt(text);
-            if (isNaN(amount) || amount <= 0) 
-                return ctx.reply('❌ Invalid amount. Enter a valid number:');
+
+            if (isNaN(amount)) {
+                return ctx.reply('❌ Please enter numbers only.');
+            }
+
+            if (amount < 100 || amount > 5000) {
+                return ctx.reply('❌ Amount must be between 100 PKR and 5000 PKR.');
+            }
 
             session.depositAmount = amount;
             session.step = 'awaitProof';
+
             return ctx.reply(
 `📤 Payment of ${amount} PKR is noted for upgrade your funds.
 
