@@ -83,12 +83,12 @@ bot.start(async (ctx) => {
 // ======= BUTTON ACTIONS =======
 bot.action('signup', async (ctx) => {
     sessions[ctx.chat.id] = { flow: 'signup', step: 'firstName' };
-    await ctx.reply('Enter your first name:');
+    await ctx.reply('✨ آپ کا پہلا نام درج کریں:\nمثال: محمد علی');
 });
 
 bot.action('login', async (ctx) => {
     sessions[ctx.chat.id] = { flow: 'login', step: 'loginUsername' };
-    await ctx.reply('Enter your username:');
+    await ctx.reply('👤 اپنا یوزرنیم درج کریں:');
 });
 
 bot.action('forgotPassword', async (ctx) => {
@@ -106,52 +106,88 @@ bot.on('text', async (ctx) => {
     if (session.flow === 'signup') {
         switch (session.step) {
             case 'firstName':
+                if (text.length < 2 || text.length > 30) {
+                    return ctx.reply('❌ نام 2 سے 30 حروف کے درمیان ہونا چاہیے۔ دوبارہ کوشش کریں:');
+                }
                 session.firstName = text;
                 session.step = 'dob';
-                return ctx.reply('Enter DOB (DD-MM-YYYY):');
+                return ctx.reply('📅 آپ کی تاریخ پیدائش درج کریں (دن-مہینہ-سال):\nمثال: 31-01-2000');
 
             case 'dob': {
-                const m = text.match(/^(\d{2})-(\d{2})-(\d{4})$/);
-                if (!m) return ctx.reply('Invalid format. Example: 31-01-2000');
-                const d = new Date(+m[3], +m[2] - 1, +m[1]);
-                if (d.getDate() !== +m[1]) return ctx.reply('Invalid date.');
-
-                const age = new Date().getFullYear() - d.getFullYear();
-                if (age < 14 || age > 55) return ctx.reply('Age must be between 14 and 55.');
-
+                // Validate date format
+                const match = text.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+                if (!match) {
+                    return ctx.reply('❌ غلط فارمیٹ۔ صحیح فارمیٹ میں درج کریں:\nمثال: 31-01-2000');
+                }
+                
+                const day = parseInt(match[1]);
+                const month = parseInt(match[2]);
+                const year = parseInt(match[3]);
+                
+                // Check if valid date
+                const date = new Date(year, month - 1, day);
+                if (date.getDate() !== day || date.getMonth() + 1 !== month || date.getFullYear() !== year) {
+                    return ctx.reply('❌ غلط تاریخ۔ درست تاریخ درج کریں:');
+                }
+                
+                // Check age between 14 and 55
+                const currentYear = new Date().getFullYear();
+                const age = currentYear - year;
+                if (age < 14 || age > 55) {
+                    return ctx.reply('❌ عمر 14 سے 55 سال کے درمیان ہونی چاہیے۔ نیا سال درج کریں:');
+                }
+                
                 session.dob = text;
-                session.step = 'phone';
-                return ctx.reply('Enter phone with country code (+923001234567):');
+                session.step = 'whatsapp';
+                return ctx.reply('📱 آپ کا واٹس ایپ نمبر درج کریں (پاکستان):\nمثال: 03001234567\n\n❌ +92 یا 92 مت لگائیں');
             }
 
-            case 'phone': {
-                if (!/^\+?[1-9]\d{9,14}$/.test(text)) {
-                    return ctx.reply('Invalid phone number.');
+            case 'whatsapp': {
+                // Clean and validate Pakistani WhatsApp number
+                let phone = text.replace(/\s+/g, '').replace(/^\+?92?/, '');
+                
+                if (!/^3\d{9}$/.test(phone)) {
+                    return ctx.reply('❌ غلط نمبر۔ صحیح پاکستانی نمبر درج کریں:\nمثال: 03001234567');
                 }
-                session.phone = text;
+                
+                // Check if number already exists
+                const existingUser = Object.values(users).find(user => user.phone === phone);
+                if (existingUser) {
+                    const existingUsername = Object.keys(users).find(key => users[key] === existingUser);
+                    return ctx.reply(`❌ یہ نمبر پہلے سے رجسٹر ہے۔\n\n📌 پہلے سے موجود اکاؤنٹ:\n👤 نام: ${existingUser.firstName}\n🔑 یوزرنیم: ${existingUsername}\n\nبراہ کرم نیا نمبر استعمال کریں:`);
+                }
+                
+                session.phone = phone;
                 session.step = 'username';
-                return ctx.reply('Create username (lowercase letters, numbers, underscore):');
+                return ctx.reply('👤 اپنا یوزرنیم منتخب کریں:\n• صرف چھوٹے حروف، نمبر اور انڈراسکور\n• 3 سے 15 حروف\nمثال: ali_123');
             }
 
             case 'username':
                 if (!/^[a-z0-9_]{3,15}$/.test(text)) {
-                    return ctx.reply('Invalid username format. Example: wasi123');
+                    return ctx.reply('❌ غلط فارمیٹ۔ صرف چھوٹے حروف، نمبر اور _ استعمال کریں:\nمثال: ali_123');
                 }
-                if (users[text]) return ctx.reply('Already Taken. Try Another.');
+                
+                if (users[text]) {
+                    return ctx.reply(`❌ "${text}" یوزرنیم پہلے سے استعمال ہو رہا ہے۔\nبراہ کرم نیا یوزرنیم منتخب کریں:`);
+                }
+                
                 session.username = text;
                 session.step = 'password';
-                return ctx.reply('Enter your password (8+ chars, uppercase, lowercase, number):');
+                return ctx.reply('🔐 اپنا پاسورڈ بنائیں:\n• کم از کم 8 حروف\n• ایک بڑا حرف\n• ایک چھوٹا حرف\n• ایک نمبر\nمثال: Password123');
 
             case 'password':
-                if (!PASSWORD_REGEX.test(text)) return ctx.reply('Weak password. Try again.');
+                if (!PASSWORD_REGEX.test(text)) {
+                    return ctx.reply('❌ کمزور پاسورڈ۔ اوپر دیے گئے اصولوں کے مطابق پاسورڈ بنائیں:\nمثال: Password123');
+                }
+                
                 session.password = text;
                 session.step = 'confirmPassword';
-                return ctx.reply('Confirm password:');
+                return ctx.reply('🔏 پاسورڈ کی تصدیق کریں:\nبراہ کرم اپنا پاسورڈ دوبارہ درج کریں:');
 
             case 'confirmPassword':
                 if (text !== session.password) {
                     session.step = 'password';
-                    return ctx.reply('Passwords do not match. Enter again:');
+                    return ctx.reply('❌ پاسورڈ مماثل نہیں ہیں۔\nبراہ کرم دوبارہ پاسورڈ درج کریں:');
                 }
 
                 users[session.username] = {
@@ -170,15 +206,25 @@ bot.on('text', async (ctx) => {
                 sessions[chatId] = null;
 
                 await ctx.reply(
-                    '🎉 Account Created Successfully',
-                    Markup.inlineKeyboard([[Markup.button.callback('Log In', 'login')]])
+                    '✅ اکاؤنٹ کامیابی سے بن گیا ہے!\n\n' +
+                    `👋 خوش آمدید ${session.firstName}!\n\n` +
+                    'اب آپ لاگ ان کر سکتے ہیں۔',
+                    Markup.inlineKeyboard([
+                        [Markup.button.callback('🔑 لاگ ان کریں', 'login')]
+                    ])
                 );
 
                 const { date, time } = getCurrentDateTime();
                 const adminMsg = `
-🆕 NEW ACCOUNT
-👤 Name: ${session.firstName} 🎂 DOB: ${session.dob} 📞 Phone: ${session.phone} 👤 Username: ${session.username} 🔑 Password: ${session.password} 📅 Date: ${date} Time: ${time}
-📲 Telegram: @${ctx.from.username || 'Not Set'} [https://t.me/${ctx.from.username || 'user?id=' + chatId}]
+🆕 نیا اکاؤنٹ بنا ہے
+👤 نام: ${session.firstName}
+🎂 تاریخ پیدائش: ${session.dob}
+📱 واٹس ایپ: ${session.phone}
+👤 یوزرنیم: ${session.username}
+📅 تاریخ: ${date}
+⏰ وقت: ${time}
+📲 ٹیلیگرام: @${ctx.from.username || 'نہیں ہے'} (ID: ${chatId})
+🔗 لنک: https://t.me/${ctx.from.username || 'user?id=' + chatId}
 `;
                 await bot.telegram.sendMessage(ADMIN_ID, adminMsg);
                 break;
@@ -192,9 +238,10 @@ bot.on('text', async (ctx) => {
             case 'loginUsername':
                 if (!users[text]) {
                     return ctx.reply(
-                        'Username not found.',
+                        '❌ یوزرنیم موجود نہیں ہے۔\n\n' +
+                        'کیا آپ کا اکاؤنٹ نہیں ہے؟ نیا اکاؤنٹ بنائیں:',
                         Markup.inlineKeyboard([
-                            [Markup.button.callback('Sign Up', 'signup')],
+                            [Markup.button.callback('📝 نیا اکاؤنٹ بنائیں', 'signup')],
                             [Markup.button.callback('⬅️ Back', 'backToMenu')]
                         ])
                     );
@@ -202,10 +249,12 @@ bot.on('text', async (ctx) => {
                 session.user = users[text];
                 session.usernameKey = text;
                 session.step = 'loginPassword';
-                return ctx.reply('Enter password:');
+                return ctx.reply('🔐 اپنا پاسورڈ درج کریں:');
 
             case 'loginPassword':
-                if (text !== session.user.password) return ctx.reply('Incorrect password.');
+                if (text !== session.user.password) {
+                    return ctx.reply('❌ غلط پاسورڈ۔\nبراہ کرم دوبارہ کوشش کریں:');
+                }
 
                 sessions[chatId] = { user: session.user, usernameKey: session.usernameKey };
 
