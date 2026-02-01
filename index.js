@@ -88,10 +88,10 @@ bot.action('forgotPassword', async (ctx) => {
     await ctx.reply('Password recovery not supported.\nPlease create a new account.');
 });
 
-// ======= TEXT HANDLER =======
-bot.on('text', async (ctx) => {
+// ======= TEXT & MEDIA HANDLER =======
+bot.on('message', async (ctx) => {
     const chatId = ctx.chat.id;
-    const text = ctx.message.text.trim();
+    const text = ctx.message.text?.trim();
     const session = sessions[chatId];
     if (!session) return;
 
@@ -213,8 +213,10 @@ bot.on('text', async (ctx) => {
         return;
     }
 
-    // ======= DEPOSIT FLOW =======
+    // ===== DEPOSIT FLOW (AMOUNT + PROOF) =====
     if (session.flow === 'deposit') {
+        const user = users[session.usernameKey];
+
         // Step 1: Enter Amount
         if (session.step === 'enterAmount') {
             const amount = parseInt(text);
@@ -228,14 +230,20 @@ Please send your payment proof (screenshot or message).`
             );
         }
 
-        // Step 2: Await Proof
+        // Step 2: Await Proof (text or media)
         if (session.step === 'awaitProof') {
-            const user = users[session.usernameKey];
-            const { date, time } = getCurrentDateTime();
+            let proofText = '';
+            if (ctx.message.text) {
+                proofText = ctx.message.text;
+            } else if (ctx.message.photo) {
+                const largestPhoto = ctx.message.photo[ctx.message.photo.length - 1];
+                proofText = `📸 Screenshot/photo received (file_id: ${largestPhoto.file_id})`;
+            } else if (ctx.message.document) {
+                proofText = `📄 Document received (file_id: ${ctx.message.document.file_id})`;
+            } else {
+                proofText = '📎 Media received';
+            }
 
-            await ctx.reply('⏳ Please wait, your fund updating in process...', withBackButton([]));
-
-            const proofText = ctx.message.text || 'Sent proof';
             if (!session.pendingDeposits) session.pendingDeposits = [];
             const depositId = generateDepositId();
 
@@ -246,6 +254,9 @@ Please send your payment proof (screenshot or message).`
                 method: session.depositMethod
             });
 
+            await ctx.reply('⏳ Please wait, your fund updating in process...', withBackButton([]));
+
+            const { date, time } = getCurrentDateTime();
             const adminMsg = `
 💰 Deposit Request
 👤 User: ${user.firstName} (Username: ${session.usernameKey})
@@ -254,24 +265,41 @@ Please send your payment proof (screenshot or message).`
 🖼 Proof: ${proofText}
 `;
 
-            await bot.telegram.sendMessage(
-                ADMIN_ID,
-                adminMsg,
-                Markup.inlineKeyboard([
-                    Markup.button.callback('✅ Approve', `approve_${ctx.chat.id}_${depositId}`),
-                    Markup.button.callback('❌ Reject', `reject_${ctx.chat.id}_${depositId}`)
-                ])
-            );
+            // Send to admin
+            if (ctx.message.photo) {
+                const largestPhoto = ctx.message.photo[ctx.message.photo.length - 1];
+                await bot.telegram.sendPhoto(ADMIN_ID, largestPhoto.file_id, {
+                    caption: adminMsg,
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '✅ Approve', callback_data: `approve_${chatId}_${depositId}` }],
+                            [{ text: '❌ Reject', callback_data: `reject_${chatId}_${depositId}` }]
+                        ]
+                    }
+                });
+            } else if (ctx.message.document) {
+                await bot.telegram.sendDocument(ADMIN_ID, ctx.message.document.file_id, {
+                    caption: adminMsg,
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '✅ Approve', callback_data: `approve_${chatId}_${depositId}` }],
+                            [{ text: '❌ Reject', callback_data: `reject_${chatId}_${depositId}` }]
+                        ]
+                    }
+                });
+            } else {
+                await bot.telegram.sendMessage(ADMIN_ID, adminMsg, Markup.inlineKeyboard([
+                    Markup.button.callback('✅ Approve', `approve_${chatId}_${depositId}`),
+                    Markup.button.callback('❌ Reject', `reject_${chatId}_${depositId}`)
+                ]));
+            }
 
             session.step = null; // wait for admin
-            return;
         }
     }
 });
 
 // ===== BUTTON ACTIONS =====
-
-// --- Check Balance + View Transactions
 bot.action('checkBalance', async (ctx) => {
     const session = sessions[ctx.chat.id];
     if (!session || !session.usernameKey) return ctx.reply('Please login first.');
@@ -288,13 +316,12 @@ bot.action('checkBalance', async (ctx) => {
     );
 });
 
-// --- Deposit Balance (Select Payment Method)
 bot.action('depositBalance', async (ctx) => {
     const session = sessions[ctx.chat.id];
     if (!session || !session.usernameKey) return ctx.reply('Please login first.');
 
-    sessions[ctx.chat.id].flow = 'deposit';
-    sessions[ctx.chat.id].step = null;
+    session.flow = 'deposit';
+    session.step = null;
 
     await ctx.reply(
         'Select Your Payment Deposit Method:',
@@ -307,7 +334,6 @@ bot.action('depositBalance', async (ctx) => {
     );
 });
 
-// ===== Deposit Payment Method Selected =====
 bot.action(/deposit(JazzCash|EasyPaisa|UPaisa)/, async (ctx) => {
     const session = sessions[ctx.chat.id];
     if (!session || !session.usernameKey) return ctx.reply('Please login first.');
@@ -330,13 +356,13 @@ Account Type: ${accountType}`
     await ctx.reply('💵 Enter your amount you are sending (PKR):');
 });
 
-// --- Withdraw Balance
+// Withdraw
 bot.action('withdrawBalance', async (ctx) => {
     const session = sessions[ctx.chat.id];
     if (!session || !session.usernameKey) return ctx.reply('Please login first.');
 
     const user = users[session.usernameKey];
-    const amount = 200; // example withdraw
+    const amount = 200;
     if ((user.balance || 0) < amount) return ctx.reply(`❌ Not Enough Balance To Withdraw ${amount} PKR`, withBackButton([]));
 
     user.balance -= amount;
@@ -348,7 +374,7 @@ bot.action('withdrawBalance', async (ctx) => {
     return ctx.reply(`✅ ${amount} PKR Withdrawn Successfully`, withBackButton([]));
 });
 
-// --- Buy Bot (deduct 100 PKR)
+// Buy Bot
 bot.action('buyBot', async (ctx) => {
     const session = sessions[ctx.chat.id];
     if (!session || !session.usernameKey) return ctx.reply('Please login first.');
@@ -366,7 +392,7 @@ bot.action('buyBot', async (ctx) => {
     return ctx.reply(`✅ Bot Purchased! ${cost} PKR Deducted`, withBackButton([]));
 });
 
-// --- View Transaction History
+// View Transaction History
 bot.action('viewTransactions', async (ctx) => {
     const session = sessions[ctx.chat.id];
     if (!session || !session.usernameKey) return ctx.reply('Please login first.');
@@ -382,13 +408,13 @@ bot.action('viewTransactions', async (ctx) => {
     return ctx.reply(historyMsg, withBackButton([]));
 });
 
-// --- Log Out
+// Log Out
 bot.action('logOut', async (ctx) => {
     sessions[ctx.chat.id] = null;
     return ctx.reply('🔓 You have been logged out.', withBackButton([]));
 });
 
-// ======= BACK BUTTON =====
+// Back Button
 bot.action('backToMenu', async (ctx) => {
     const session = sessions[ctx.chat.id];
     if (!session || !session.usernameKey) {
@@ -439,28 +465,6 @@ bot.action(/approve_(\d+)_(dep_\d+_\d+)/, async (ctx) => {
 
     await bot.telegram.sendMessage(userChatId, `✅ Your fund of ${deposit.amount} PKR has been approved!`, withBackButton([]));
 
-    // remove processed deposit
     session.pendingDeposits = session.pendingDeposits.filter(d => d.id !== depositId);
 
-    await ctx.editMessageText('✅ Deposit Approved ✅');
-});
-
-bot.action(/reject_(\d+)_(dep_\d+_\d+)/, async (ctx) => {
-    const [_, userChatId, depositId] = ctx.match;
-    const session = sessions[userChatId];
-    if (!session || !session.pendingDeposits) return ctx.answerCbQuery('No pending deposit.');
-
-    const deposit = session.pendingDeposits.find(d => d.id === depositId);
-    if (!deposit) return ctx.answerCbQuery('Deposit already processed.');
-
-    await bot.telegram.sendMessage(userChatId, `❌ Your deposit of ${deposit.amount} PKR has been rejected.`, withBackButton([]));
-
-    // remove processed deposit
-    session.pendingDeposits = session.pendingDeposits.filter(d => d.id !== depositId);
-
-    await ctx.editMessageText('❌ Deposit Rejected ❌');
-});
-
-// ===== LAUNCH =====
-bot.launch();
-console.log('Bot running...');
+    await ctx.editMessageText('✅ Deposit Approved ✅
