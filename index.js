@@ -23,8 +23,8 @@ const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
 // ===== DATE & TIME (Pakistan Time) =====
 function getCurrentDateTime() {
     const d = new Date();
-    const utc = d.getTime() + d.getTimezoneOffset() * 60000; // UTC in ms
-    const pakistanTime = new Date(utc + 5 * 60 * 60 * 1000); // UTC+5
+    const utc = d.getTime() + d.getTimezoneOffset() * 60000;
+    const pakistanTime = new Date(utc + 5 * 60 * 60 * 1000);
 
     const date = `${String(pakistanTime.getDate()).padStart(2,'0')}-${String(pakistanTime.getMonth()+1).padStart(2,'0')}-${pakistanTime.getFullYear()}`;
     const time = `${String(pakistanTime.getHours()).padStart(2,'0')}:${String(pakistanTime.getMinutes()).padStart(2,'0')}:${String(pakistanTime.getSeconds()).padStart(2,'0')}`;
@@ -46,7 +46,6 @@ bot.start(async (ctx) => {
     const session = sessions[chatId];
 
     if (session && session.usernameKey && users[session.usernameKey]) {
-        // Already logged in, show dashboard
         const user = users[session.usernameKey];
         return ctx.reply(
             `Dear ${user.firstName}, Welcome Back To Paid WhatsApp Bot`,
@@ -60,7 +59,6 @@ bot.start(async (ctx) => {
         );
     }
 
-    // Not logged in
     await ctx.reply(
         '👋 Welcome!\n\nPlease Sign Up or Log In:',
         Markup.inlineKeyboard([
@@ -125,19 +123,15 @@ bot.on('text', async (ctx) => {
 
             case 'username':
                 if (!/^[a-z0-9_]{3,15}$/.test(text)) {
-                    return ctx.reply('Invalid username format. Use lowercase letters, numbers, underscore (_). Example: wasi123');
+                    return ctx.reply('Invalid username format. Example: wasi123');
                 }
-                if (users[text]) {
-                    return ctx.reply('Already Taken. Try Another.');
-                }
+                if (users[text]) return ctx.reply('Already Taken. Try Another.');
                 session.username = text;
                 session.step = 'password';
-                return ctx.reply('Enter your password (8+ chars, must include uppercase, lowercase, number):');
+                return ctx.reply('Enter your password (8+ chars, uppercase, lowercase, number):');
 
             case 'password':
-                if (!PASSWORD_REGEX.test(text)) {
-                    return ctx.reply('Weak password. Try again.');
-                }
+                if (!PASSWORD_REGEX.test(text)) return ctx.reply('Weak password. Try again.');
                 session.password = text;
                 session.step = 'confirmPassword';
                 return ctx.reply('Confirm password:');
@@ -148,7 +142,6 @@ bot.on('text', async (ctx) => {
                     return ctx.reply('Passwords do not match. Enter again:');
                 }
 
-                // SAVE GLOBAL ACCOUNT
                 users[session.username] = {
                     firstName: session.firstName,
                     dob: session.dob,
@@ -158,19 +151,14 @@ bot.on('text', async (ctx) => {
                     balance: 0,
                     transactions: []
                 };
-
                 saveUsers();
                 sessions[chatId] = null;
 
-                // ✅ Account Created Message + Log In button
                 await ctx.reply(
                     '🎉 Account Created Successfully',
-                    Markup.inlineKeyboard([
-                        [Markup.button.callback('Log In', 'login')]
-                    ])
+                    Markup.inlineKeyboard([[Markup.button.callback('Log In', 'login')]])
                 );
 
-                // Admin notification
                 const { date, time } = getCurrentDateTime();
                 const adminMsg = `
 🆕 NEW ACCOUNT
@@ -202,13 +190,10 @@ bot.on('text', async (ctx) => {
                 return ctx.reply('Enter password:');
 
             case 'loginPassword':
-                if (text !== session.user.password) {
-                    return ctx.reply('Incorrect password.');
-                }
+                if (text !== session.user.password) return ctx.reply('Incorrect password.');
 
                 sessions[chatId] = { user: session.user, usernameKey: session.usernameKey };
 
-                // Account Verified + Dashboard
                 return ctx.reply(
                     `Dear ${session.user.firstName}, Welcome To Paid WhatsApp Bot`,
                     withBackButton([
@@ -224,31 +209,43 @@ bot.on('text', async (ctx) => {
     }
 
     // ===== DEPOSIT FLOW =====
-    if (session.flow === 'deposit' && session.step === 'enterAmount') {
-        const amount = parseInt(text);
-        if (isNaN(amount) || amount <= 0) {
-            return ctx.reply('❌ Invalid amount. Enter a valid number:');
+    if (session.flow === 'deposit') {
+        // Step 1: Enter Amount
+        if (session.step === 'enterAmount') {
+            const amount = parseInt(text);
+            if (isNaN(amount) || amount <= 0) return ctx.reply('❌ Invalid amount. Enter a valid number:');
+
+            session.depositAmount = amount;
+            session.step = 'awaitProof';
+            return ctx.reply(
+`📤 Payment of ${amount} PKR is noted.
+Please send your payment proof (screenshot or message). You can type anything or send an image.`
+            );
         }
 
-        const user = users[session.usernameKey];
-        user.balance = (user.balance || 0) + amount;
-        if (!user.transactions) user.transactions = [];
-        const { date, time } = getCurrentDateTime();
-        user.transactions.push({
-            type: `Deposit ➕ (${session.depositMethod})`,
-            amount,
-            date,
-            time
-        });
+        // Step 2: Await Proof
+        if (session.step === 'awaitProof') {
+            const user = users[session.usernameKey];
+            const { date, time } = getCurrentDateTime();
 
-        saveUsers();
+            user.balance = (user.balance || 0) + session.depositAmount;
+            if (!user.transactions) user.transactions = [];
+            user.transactions.push({
+                type: `Deposit ➕ (${session.depositMethod})`,
+                amount: session.depositAmount,
+                date,
+                time,
+                proof: ctx.message.text || 'Sent proof'
+            });
+            saveUsers();
 
-        // Reset deposit session
-        session.flow = null;
-        session.step = null;
-        session.depositMethod = null;
+            session.flow = null;
+            session.step = null;
+            session.depositAmount = null;
+            session.depositMethod = null;
 
-        return ctx.reply(`✅ ${amount} PKR deposited successfully! Your new balance is ${user.balance} PKR.`, withBackButton([]));
+            return ctx.reply(`✅ ${user.balance} PKR added successfully! Your new balance is ${user.balance} PKR.`, withBackButton([]));
+        }
     }
 });
 
@@ -277,7 +274,7 @@ bot.action('depositBalance', async (ctx) => {
     if (!session || !session.usernameKey) return ctx.reply('Please login first.');
 
     sessions[ctx.chat.id].flow = 'deposit';
-    sessions[ctx.chat.id].step = 'selectMethod';
+    sessions[ctx.chat.id].step = null;
 
     await ctx.reply(
         'Select Your Payment Deposit Method:',
@@ -290,23 +287,18 @@ bot.action('depositBalance', async (ctx) => {
     );
 });
 
-// ===== Deposit Payment Method Selected (Full Flow) =====
+// ===== Deposit Payment Method Selected =====
 bot.action(/deposit(JazzCash|EasyPaisa|UPaisa)/, async (ctx) => {
     const session = sessions[ctx.chat.id];
     if (!session || !session.usernameKey) return ctx.reply('Please login first.');
 
-    const method = ctx.match[1]; // JazzCash, EasyPaisa, UPaisa
+    const method = ctx.match[1];
     session.depositMethod = method;
     session.flow = 'deposit';
     session.step = 'enterAmount';
 
-    // Set account type according to method
-    let accountType = '';
-    if (method === 'JazzCash') accountType = 'JazzCash';
-    if (method === 'EasyPaisa') accountType = 'EasyPaisa';
-    if (method === 'UPaisa') accountType = 'U-Paisa';
+    const accountType = method === 'UPaisa' ? 'U-Paisa' : method;
 
-    // First message: payment details
     await ctx.reply(
 `💰 You selected ${accountType}. Please send payment to:
 
@@ -315,7 +307,6 @@ Account Number: 03000382844
 Account Type: ${accountType}`
     );
 
-    // Second message: ask for amount
     await ctx.reply('💵 Enter your amount you are sending (PKR):');
 });
 
@@ -326,19 +317,12 @@ bot.action('withdrawBalance', async (ctx) => {
 
     const user = users[session.usernameKey];
     const amount = 200; // example withdraw
-    if ((user.balance || 0) < amount) {
-        return ctx.reply(`❌ Not Enough Balance To Withdraw ${amount} PKR`, withBackButton([]));
-    }
+    if ((user.balance || 0) < amount) return ctx.reply(`❌ Not Enough Balance To Withdraw ${amount} PKR`, withBackButton([]));
 
     user.balance -= amount;
     if (!user.transactions) user.transactions = [];
     const { date, time } = getCurrentDateTime();
-    user.transactions.push({
-        type: 'Withdraw ➖',
-        amount: amount,
-        date,
-        time
-    });
+    user.transactions.push({ type: 'Withdraw ➖', amount, date, time });
 
     saveUsers();
     return ctx.reply(`✅ ${amount} PKR Withdrawn Successfully`, withBackButton([]));
@@ -351,19 +335,12 @@ bot.action('buyBot', async (ctx) => {
 
     const user = users[session.usernameKey];
     const cost = 100;
-    if ((user.balance || 0) < cost) {
-        return ctx.reply(`❌ Not Enough Balance To Buy Bot (Cost: ${cost} PKR)`, withBackButton([]));
-    }
+    if ((user.balance || 0) < cost) return ctx.reply(`❌ Not Enough Balance To Buy Bot (Cost: ${cost} PKR)`, withBackButton([]));
 
     user.balance -= cost;
     if (!user.transactions) user.transactions = [];
     const { date, time } = getCurrentDateTime();
-    user.transactions.push({
-        type: 'Buy Bot ➖',
-        amount: cost,
-        date,
-        time
-    });
+    user.transactions.push({ type: 'Buy Bot ➖', amount: cost, date, time });
 
     saveUsers();
     return ctx.reply(`✅ Bot Purchased! ${cost} PKR Deducted`, withBackButton([]));
@@ -375,9 +352,7 @@ bot.action('viewTransactions', async (ctx) => {
     if (!session || !session.usernameKey) return ctx.reply('Please login first.');
 
     const user = users[session.usernameKey];
-    if (!user.transactions || user.transactions.length === 0) {
-        return ctx.reply('No transactions found.', withBackButton([]));
-    }
+    if (!user.transactions || user.transactions.length === 0) return ctx.reply('No transactions found.', withBackButton([]));
 
     let historyMsg = '📜 Transaction History:\n\n';
     user.transactions.forEach((t, i) => {
@@ -393,7 +368,7 @@ bot.action('logOut', async (ctx) => {
     return ctx.reply('🔓 You have been logged out.', withBackButton([]));
 });
 
-// ===== BACK BUTTON ACTION =====
+// ===== BACK BUTTON =====
 bot.action('backToMenu', async (ctx) => {
     const session = sessions[ctx.chat.id];
     if (!session || !session.usernameKey) {
