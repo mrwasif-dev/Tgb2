@@ -420,3 +420,379 @@ bot.action(/deposit(JazzCash|EasyPaisa|UPaisa)/, async (ctx) => {
 Account Title: M Hadi
 Account Number: 03000382844
 Account Type: ${accountType}`
+    );
+
+    await ctx.reply('💵 Enter your amount you are sending (PKR):');
+});
+
+// --- Withdraw Balance (NEW IMPLEMENTATION)
+bot.action('withdrawBalance', async (ctx) => {
+    const session = sessions[ctx.chat.id];
+    if (!session || !session.usernameKey) return ctx.reply('Please login first.');
+
+    const user = users[session.usernameKey];
+    
+    // Check minimum balance
+    if (user.balance < 200) {
+        return ctx.reply('❌ Minimum balance required for withdrawal is 200 PKR.', withBackButton([]));
+    }
+
+    sessions[ctx.chat.id].flow = 'withdraw';
+    sessions[ctx.chat.id].step = 'enterAmount';
+
+    return ctx.reply(
+        `💰 Your current balance: ${user.balance} PKR\n\n` +
+        `💵 Enter amount to withdraw:\n` +
+        `• Minimum: 200 PKR\n` +
+        `• Maximum: 5000 PKR\n` +
+        `• Daily Limit: 3 transactions`,
+        withBackButton([])
+    );
+});
+
+// ===== Withdraw Payment Method Selected =====
+bot.action(/withdraw(JazzCash|EasyPaisa|UPaisa)/, async (ctx) => {
+    const session = sessions[ctx.chat.id];
+    if (!session || !session.usernameKey) return ctx.reply('Please login first.');
+
+    const method = ctx.match[1];
+    session.withdrawMethod = method;
+    session.step = 'enterAccountNumber';
+
+    const accountType = method === 'UPaisa' ? 'U-Paisa' : method;
+    
+    return ctx.reply(
+        `🏦 You selected ${accountType} for withdrawal.\n\n` +
+        `📱 Enter your ${accountType} account number (11 digits, e.g., 03001234567):`
+    );
+});
+
+// --- Confirm Withdraw
+bot.action('confirmWithdraw', async (ctx) => {
+    const chatId = ctx.chat.id;
+    const session = sessions[chatId];
+    if (!session || !session.usernameKey) return ctx.answerCbQuery('Session expired.');
+
+    const user = users[session.usernameKey];
+    const { date, time } = getCurrentDateTime();
+    
+    // Calculate processing fee
+    const processingFee = Math.max(10, Math.floor(session.withdrawAmount * 0.02));
+    const netAmount = session.withdrawAmount - processingFee;
+    
+    // Generate unique withdraw ID
+    const withdrawId = generateWithdrawId();
+    
+    // Hold the amount temporarily
+    user.balance -= session.withdrawAmount;
+    
+    // Add to pending withdrawals
+    if (!user.pendingWithdrawals) user.pendingWithdrawals = [];
+    user.pendingWithdrawals.push({
+        id: withdrawId,
+        amount: session.withdrawAmount,
+        netAmount: netAmount,
+        fee: processingFee,
+        method: session.withdrawMethod,
+        account: session.withdrawAccount,
+        date: date,
+        time: time,
+        status: 'pending'
+    });
+    
+    // Update daily withdrawal count
+    if (!user.dailyWithdrawals) user.dailyWithdrawals = { date: date, count: 0, amount: 0 };
+    user.dailyWithdrawals.count += 1;
+    user.dailyWithdrawals.amount += session.withdrawAmount;
+    
+    saveUsers();
+    
+    // Send notification to admin
+    const adminMsg = `
+💸 WITHDRAWAL REQUEST
+👤 User: ${user.firstName} (${session.usernameKey})
+💰 Amount: ${session.withdrawAmount} PKR
+📉 Fee: ${processingFee} PKR
+💵 Net: ${netAmount} PKR
+🏦 Method: ${session.withdrawMethod}
+📱 Account: ${session.withdrawAccount}
+📅 Date: ${date} ⏰ Time: ${time}
+💳 Balance: ${user.balance} PKR
+📊 Daily: ${user.dailyWithdrawals.count}/3 withdrawals
+    `;
+    
+    await bot.telegram.sendMessage(
+        ADMIN_ID,
+        adminMsg,
+        Markup.inlineKeyboard([
+            [Markup.button.callback('✅ Approve & Send', `admin_approve_${chatId}_${withdrawId}`)],
+            [Markup.button.callback('❌ Reject', `admin_reject_${chatId}_${withdrawId}`)]
+        ])
+    );
+    
+    // Notify user
+    await ctx.reply(
+        `⏳ Withdrawal request submitted!\n\n` +
+        `📋 Details:\n` +
+        `• Amount: ${session.withdrawAmount} PKR\n` +
+        `• Fee: ${processingFee} PKR\n` +
+        `• Net: ${netAmount} PKR\n` +
+        `• Method: ${session.withdrawMethod}\n` +
+        `• Account: ${session.withdrawAccount}\n` +
+        `• Status: Pending Admin Approval\n\n` +
+        `Request ID: ${withdrawId}\n` +
+        `You will be notified once processed.`,
+        withBackButton([])
+    );
+    
+    // Reset session
+    sessions[chatId].flow = null;
+    sessions[chatId].step = null;
+    delete session.withdrawAmount;
+    delete session.withdrawMethod;
+    delete session.withdrawAccount;
+});
+
+// --- Cancel Withdraw
+bot.action('cancelWithdraw', async (ctx) => {
+    const session = sessions[ctx.chat.id];
+    sessions[ctx.chat.id].flow = null;
+    sessions[ctx.chat.id].step = null;
+    
+    await ctx.reply('❌ Withdrawal request cancelled.', withBackButton([]));
+});
+
+// --- Buy Bot (deduct 100 PKR)
+bot.action('buyBot', async (ctx) => {
+    const session = sessions[ctx.chat.id];
+    if (!session || !session.usernameKey) return ctx.reply('Please login first.');
+
+    const user = users[session.usernameKey];
+    const cost = 100;
+    if ((user.balance || 0) < cost) return ctx.reply(`❌ Not Enough Balance To Buy Bot (Cost: ${cost} PKR)`, withBackButton([]));
+
+    user.balance -= cost;
+    if (!user.transactions) user.transactions = [];
+    const { date, time } = getCurrentDateTime();
+    user.transactions.push({ type: 'Buy Bot ➖', amount: cost, date, time });
+
+    saveUsers();
+    return ctx.reply(`✅ Bot Purchased! ${cost} PKR Deducted`, withBackButton([]));
+});
+
+// --- View Transaction History
+bot.action('viewTransactions', async (ctx) => {
+    const session = sessions[ctx.chat.id];
+    if (!session || !session.usernameKey) return ctx.reply('Please login first.');
+
+    const user = users[session.usernameKey];
+    if (!user.transactions || user.transactions.length === 0) return ctx.reply('No transactions found.', withBackButton([]));
+
+    let historyMsg = '📜 Transaction History:\n\n';
+    user.transactions.forEach((t, i) => {
+        historyMsg += `${i + 1}. ${t.type}: ${t.amount} PKR on ${t.date} at ${t.time}\n`;
+    });
+
+    // Show pending withdrawals if any
+    if (user.pendingWithdrawals && user.pendingWithdrawals.length > 0) {
+        historyMsg += '\n⏳ Pending Withdrawals:\n';
+        user.pendingWithdrawals.forEach((w, i) => {
+            historyMsg += `${i + 1}. ${w.amount} PKR to ${w.account} (${w.method}) - ${w.status}\n`;
+        });
+    }
+
+    return ctx.reply(historyMsg, withBackButton([]));
+});
+
+// --- Log Out
+bot.action('logOut', async (ctx) => {
+    sessions[ctx.chat.id] = null;
+    return ctx.reply('🔓 You have been logged out.', withBackButton([]));
+});
+
+// ======= BACK BUTTON =====
+bot.action('backToMenu', async (ctx) => {
+    const session = sessions[ctx.chat.id];
+    if (!session || !session.usernameKey) {
+        return ctx.reply(
+            '👋 Welcome!\n\nPlease Sign Up or Log In:',
+            Markup.inlineKeyboard([
+                Markup.button.callback('Sign Up', 'signup'),
+                Markup.button.callback('Log In', 'login')
+            ])
+        );
+    } else {
+        const user = users[session.usernameKey];
+        return ctx.reply(
+            `Dear ${user.firstName}, Welcome To Paid WhatsApp Bot`,
+            withBackButton([
+                [Markup.button.callback('Check Balance', 'checkBalance')],
+                [Markup.button.callback('Buy Bot', 'buyBot')],
+                [Markup.button.callback('Deposit Balance', 'depositBalance')],
+                [Markup.button.callback('Withdraw Balance', 'withdrawBalance')],
+                [Markup.button.callback('Log Out', 'logOut')]
+            ])
+        );
+    }
+});
+
+// ======= ADMIN APPROVAL FOR DEPOSITS =======
+bot.action(/approve_(\d+)_(dep_\d+_\d+)/, async (ctx) => {
+    const [_, userChatId, depositId] = ctx.match;
+    const session = sessions[userChatId];
+    if (!session || !session.pendingDeposits) return ctx.answerCbQuery('No pending deposit.');
+
+    const deposit = session.pendingDeposits.find(d => d.id === depositId);
+    if (!deposit) return ctx.answerCbQuery('Deposit already processed.');
+
+    const user = users[session.usernameKey];
+    const { date, time } = getCurrentDateTime();
+
+    user.balance = (user.balance || 0) + deposit.amount;
+    if (!user.transactions) user.transactions = [];
+    user.transactions.push({
+        type: `Deposit ➕ (${deposit.method || 'N/A'})`,
+        amount: deposit.amount,
+        date,
+        time,
+        proof: deposit.proof
+    });
+    saveUsers();
+
+    await bot.telegram.sendMessage(userChatId, `✅ Your fund of ${deposit.amount} PKR has been approved!`, withBackButton([]));
+
+    // remove processed deposit
+    session.pendingDeposits = session.pendingDeposits.filter(d => d.id !== depositId);
+
+    await ctx.editMessageText('✅ Deposit Approved ✅');
+});
+
+bot.action(/reject_(\d+)_(dep_\d+_\d+)/, async (ctx) => {
+    const [_, userChatId, depositId] = ctx.match;
+    const session = sessions[userChatId];
+    if (!session || !session.pendingDeposits) return ctx.answerCbQuery('No pending deposit.');
+
+    const deposit = session.pendingDeposits.find(d => d.id === depositId);
+    if (!deposit) return ctx.answerCbQuery('Deposit already processed.');
+
+    await bot.telegram.sendMessage(userChatId, `❌ Your deposit of ${deposit.amount} PKR has been rejected.`, withBackButton([]));
+
+    // remove processed deposit
+    session.pendingDeposits = session.pendingDeposits.filter(d => d.id !== depositId);
+
+    await ctx.editMessageText('❌ Deposit Rejected ❌');
+});
+
+// ======= ADMIN APPROVAL FOR WITHDRAWALS =======
+bot.action(/admin_approve_(\d+)_(wd_\d+_\d+)/, async (ctx) => {
+    const [_, userChatId, withdrawId] = ctx.match;
+    const session = sessions[userChatId];
+    if (!session || !session.usernameKey) return ctx.answerCbQuery('User not found.');
+
+    const user = users[session.usernameKey];
+    if (!user.pendingWithdrawals) return ctx.answerCbQuery('No pending withdrawals.');
+
+    const withdrawIndex = user.pendingWithdrawals.findIndex(w => w.id === withdrawId);
+    if (withdrawIndex === -1) return ctx.answerCbQuery('Withdrawal already processed.');
+
+    const withdraw = user.pendingWithdrawals[withdrawIndex];
+    const { date, time } = getCurrentDateTime();
+
+    // Update withdrawal status
+    withdraw.status = 'approved';
+    withdraw.approvedDate = date;
+    withdraw.approvedTime = time;
+
+    // Add to transaction history
+    if (!user.transactions) user.transactions = [];
+    user.transactions.push({
+        type: `Withdrawal ➖ (${withdraw.method})`,
+        amount: withdraw.amount,
+        netAmount: withdraw.netAmount,
+        fee: withdraw.fee,
+        date: date,
+        time: time,
+        account: withdraw.account,
+        status: 'approved'
+    });
+
+    saveUsers();
+
+    // Notify user
+    await bot.telegram.sendMessage(
+        userChatId,
+        `✅ Withdrawal Approved!\n\n` +
+        `💰 Amount: ${withdraw.amount} PKR\n` +
+        `📉 Fee: ${withdraw.fee} PKR\n` +
+        `💵 Net Sent: ${withdraw.netAmount} PKR\n` +
+        `🏦 To: ${withdraw.account} (${withdraw.method})\n` +
+        `📅 Date: ${date} at ${time}\n\n` +
+        `Your funds have been sent to your account.`,
+        withBackButton([])
+    );
+
+    // Remove from pending
+    user.pendingWithdrawals.splice(withdrawIndex, 1);
+    saveUsers();
+
+    await ctx.editMessageText(`✅ Withdrawal Approved & Amount Sent\n\nUser: ${user.firstName}\nAmount: ${withdraw.netAmount} PKR`);
+});
+
+bot.action(/admin_reject_(\d+)_(wd_\d+_\d+)/, async (ctx) => {
+    const [_, userChatId, withdrawId] = ctx.match;
+    const session = sessions[userChatId];
+    if (!session || !session.usernameKey) return ctx.answerCbQuery('User not found.');
+
+    const user = users[session.usernameKey];
+    if (!user.pendingWithdrawals) return ctx.answerCbQuery('No pending withdrawals.');
+
+    const withdrawIndex = user.pendingWithdrawals.findIndex(w => w.id === withdrawId);
+    if (withdrawIndex === -1) return ctx.answerCbQuery('Withdrawal already processed.');
+
+    const withdraw = user.pendingWithdrawals[withdrawIndex];
+    const { date, time } = getCurrentDateTime();
+
+    // Return balance to user
+    user.balance += withdraw.amount;
+    
+    // Update daily withdrawal count
+    if (user.dailyWithdrawals) {
+        user.dailyWithdrawals.count = Math.max(0, user.dailyWithdrawals.count - 1);
+        user.dailyWithdrawals.amount = Math.max(0, user.dailyWithdrawals.amount - withdraw.amount);
+    }
+
+    // Add to transaction history
+    if (!user.transactions) user.transactions = [];
+    user.transactions.push({
+        type: `Withdrawal ❌ (Rejected)`,
+        amount: withdraw.amount,
+        date: date,
+        time: time,
+        account: withdraw.account,
+        status: 'rejected',
+        reason: 'Admin rejected'
+    });
+
+    // Notify user
+    await bot.telegram.sendMessage(
+        userChatId,
+        `❌ Withdrawal Rejected!\n\n` +
+        `💰 Amount: ${withdraw.amount} PKR\n` +
+        `🏦 Method: ${withdraw.method}\n` +
+        `📱 Account: ${withdraw.account}\n` +
+        `📅 Date: ${date} at ${time}\n\n` +
+        `Your balance has been restored.\n` +
+        `Current Balance: ${user.balance} PKR`,
+        withBackButton([])
+    );
+
+    // Remove from pending
+    user.pendingWithdrawals.splice(withdrawIndex, 1);
+    saveUsers();
+
+    await ctx.editMessageText(`❌ Withdrawal Rejected\n\nUser: ${user.firstName}\nAmount: ${withdraw.amount} PKR returned to balance.`);
+});
+
+// ===== LAUNCH =====
+bot.launch();
+console.log('Bot running...');
