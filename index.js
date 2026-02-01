@@ -180,6 +180,7 @@ bot.on('text', async (ctx) => {
                 await bot.telegram.sendMessage(ADMIN_ID, adminMsg);
                 break;
         }
+        return;
     }
 
     // ===== LOGIN FLOW =====
@@ -219,9 +220,10 @@ bot.on('text', async (ctx) => {
                     ])
                 );
         }
+        return;
     }
 
-    // ===== DEPOSIT AMOUNT =====
+    // ===== DEPOSIT FLOW =====
     if (session.flow === 'deposit' && session.step === 'enterAmount') {
         const amount = parseInt(text);
         if (isNaN(amount) || amount <= 0) {
@@ -246,7 +248,7 @@ bot.on('text', async (ctx) => {
         session.step = null;
         session.depositMethod = null;
 
-        return ctx.reply(`✅ ${amount} PKR deposited successfully!`, withBackButton([]));
+        return ctx.reply(`✅ ${amount} PKR deposited successfully! Your new balance is ${user.balance} PKR.`, withBackButton([]));
     }
 });
 
@@ -269,7 +271,7 @@ bot.action('checkBalance', async (ctx) => {
     );
 });
 
-// --- Deposit Balance (Select Payment Method) [Cash Removed]
+// --- Deposit Balance (Select Payment Method)
 bot.action('depositBalance', async (ctx) => {
     const session = sessions[ctx.chat.id];
     if (!session || !session.usernameKey) return ctx.reply('Please login first.');
@@ -288,16 +290,33 @@ bot.action('depositBalance', async (ctx) => {
     );
 });
 
-// ===== Deposit Payment Method Selected =====
+// ===== Deposit Payment Method Selected (Full Flow) =====
 bot.action(/deposit(JazzCash|EasyPaisa|UPaisa)/, async (ctx) => {
     const session = sessions[ctx.chat.id];
     if (!session || !session.usernameKey) return ctx.reply('Please login first.');
 
     const method = ctx.match[1]; // JazzCash, EasyPaisa, UPaisa
     session.depositMethod = method;
+    session.flow = 'deposit';
     session.step = 'enterAmount';
 
-    await ctx.reply(`💰 You selected ${method}. Enter the amount to deposit (PKR):`);
+    // Set account type according to method
+    let accountType = '';
+    if (method === 'JazzCash') accountType = 'JazzCash';
+    if (method === 'EasyPaisa') accountType = 'EasyPaisa';
+    if (method === 'UPaisa') accountType = 'U-Paisa';
+
+    // First message: payment details
+    await ctx.reply(
+`💰 You selected ${accountType}. Please send payment to:
+
+Account Title: M Hadi
+Account Number: 03000382844
+Account Type: ${accountType}`
+    );
+
+    // Second message: ask for amount
+    await ctx.reply('💵 Enter your amount you are sending (PKR):');
 });
 
 // --- Withdraw Balance
@@ -312,7 +331,6 @@ bot.action('withdrawBalance', async (ctx) => {
     }
 
     user.balance -= amount;
-
     if (!user.transactions) user.transactions = [];
     const { date, time } = getCurrentDateTime();
     user.transactions.push({
@@ -338,7 +356,6 @@ bot.action('buyBot', async (ctx) => {
     }
 
     user.balance -= cost;
-
     if (!user.transactions) user.transactions = [];
     const { date, time } = getCurrentDateTime();
     user.transactions.push({
