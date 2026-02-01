@@ -1,1 +1,2 @@
-# Tgb2
+# TG-B
+TGB
