@@ -208,7 +208,7 @@ bot.on('text', async (ctx) => {
         return;
     }
 
-    // ===== DEPOSIT FLOW =====
+    // ======= DEPOSIT FLOW =======
     if (session.flow === 'deposit') {
         // Step 1: Enter Amount
         if (session.step === 'enterAmount') {
@@ -219,7 +219,7 @@ bot.on('text', async (ctx) => {
             session.step = 'awaitProof';
             return ctx.reply(
 `📤 Payment of ${amount} PKR is noted.
-Please send your payment proof (screenshot or message). You can type anything or send an image.`
+Please send your payment proof (screenshot or message).`
             );
         }
 
@@ -228,23 +228,36 @@ Please send your payment proof (screenshot or message). You can type anything or
             const user = users[session.usernameKey];
             const { date, time } = getCurrentDateTime();
 
-            user.balance = (user.balance || 0) + session.depositAmount;
-            if (!user.transactions) user.transactions = [];
-            user.transactions.push({
-                type: `Deposit ➕ (${session.depositMethod})`,
+            // 1️⃣ فوراً یوزر کو پروسس کا میسج بھیجیں
+            await ctx.reply('⏳ Please wait, your fund updating in process...', withBackButton([]));
+
+            // 2️⃣ ایڈمن کو approval کے لیے بھیجیں
+            const proofText = ctx.message.text || 'Sent proof';
+            const adminMsg = `
+💰 Deposit Request
+👤 User: ${user.firstName} (Username: ${session.usernameKey})
+💵 Amount: ${session.depositAmount} PKR
+📅 Date: ${date} Time: ${time}
+🖼 Proof: ${proofText}
+`;
+            await bot.telegram.sendMessage(
+                ADMIN_ID,
+                adminMsg,
+                Markup.inlineKeyboard([
+                    Markup.button.callback('✅ Approve', `approve_${ctx.chat.id}`),
+                    Markup.button.callback('❌ Reject', `reject_${ctx.chat.id}`)
+                ])
+            );
+
+            // deposit info temporarily store
+            session.pendingDeposit = {
                 amount: session.depositAmount,
-                date,
-                time,
-                proof: ctx.message.text || 'Sent proof'
-            });
-            saveUsers();
+                proof: proofText
+            };
 
-            session.flow = null;
-            session.step = null;
-            session.depositAmount = null;
-            session.depositMethod = null;
-
-            return ctx.reply(`✅ ${user.balance} PKR added successfully! Your new balance is ${user.balance} PKR.`, withBackButton([]));
+            // flow wait for admin approval
+            session.step = 'awaitAdmin';
+            return;
         }
     }
 });
@@ -392,6 +405,53 @@ bot.action('backToMenu', async (ctx) => {
             ])
         );
     }
+});
+
+// ======= ADMIN APPROVAL =======
+bot.action(/approve_(\d+)/, async (ctx) => {
+    const userChatId = ctx.match[1];
+    const session = sessions[userChatId];
+    if (!session || !session.pendingDeposit) return ctx.answerCbQuery('No pending deposit.');
+
+    const user = users[session.usernameKey];
+    const { date, time } = getCurrentDateTime();
+
+    user.balance = (user.balance || 0) + session.pendingDeposit.amount;
+    if (!user.transactions) user.transactions = [];
+    user.transactions.push({
+        type: `Deposit ➕ (${session.depositMethod || 'N/A'})`,
+        amount: session.pendingDeposit.amount,
+        date,
+        time,
+        proof: session.pendingDeposit.proof
+    });
+    saveUsers();
+
+    await bot.telegram.sendMessage(userChatId, `✅ Your fund of ${session.pendingDeposit.amount} PKR has been approved!`, withBackButton([]));
+
+    session.flow = null;
+    session.step = null;
+    session.pendingDeposit = null;
+    session.depositAmount = null;
+    session.depositMethod = null;
+
+    await ctx.editMessageText('✅ Deposit Approved ✅');
+});
+
+bot.action(/reject_(\d+)/, async (ctx) => {
+    const userChatId = ctx.match[1];
+    const session = sessions[userChatId];
+    if (!session || !session.pendingDeposit) return ctx.answerCbQuery('No pending deposit.');
+
+    await bot.telegram.sendMessage(userChatId, `❌ Your deposit of ${session.pendingDeposit.amount} PKR has been rejected.`, withBackButton([]));
+
+    session.flow = null;
+    session.step = null;
+    session.pendingDeposit = null;
+    session.depositAmount = null;
+    session.depositMethod = null;
+
+    await ctx.editMessageText('❌ Deposit Rejected ❌');
 });
 
 // ===== LAUNCH =====
