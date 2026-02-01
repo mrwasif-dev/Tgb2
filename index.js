@@ -269,7 +269,7 @@ bot.action('checkBalance', async (ctx) => {
     );
 });
 
-// --- Deposit Balance (Select Payment Method)
+// --- Deposit Balance (Select Payment Method) [Cash Removed]
 bot.action('depositBalance', async (ctx) => {
     const session = sessions[ctx.chat.id];
     if (!session || !session.usernameKey) return ctx.reply('Please login first.');
@@ -280,7 +280,6 @@ bot.action('depositBalance', async (ctx) => {
     await ctx.reply(
         'Select Your Payment Deposit Method:',
         Markup.inlineKeyboard([
-            [Markup.button.callback('💵 Cash', 'depositCash')],
             [Markup.button.callback('✈️ JazzCash', 'depositJazzCash')],
             [Markup.button.callback('🏦 EasyPaisa', 'depositEasyPaisa')],
             [Markup.button.callback('💳 U-Paisa', 'depositUPaisa')],
@@ -290,11 +289,11 @@ bot.action('depositBalance', async (ctx) => {
 });
 
 // ===== Deposit Payment Method Selected =====
-bot.action(/deposit(Cash|JazzCash|EasyPaisa|UPaisa)/, async (ctx) => {
+bot.action(/deposit(JazzCash|EasyPaisa|UPaisa)/, async (ctx) => {
     const session = sessions[ctx.chat.id];
     if (!session || !session.usernameKey) return ctx.reply('Please login first.');
 
-    const method = ctx.match[1]; // Cash, JazzCash, EasyPaisa, UPaisa
+    const method = ctx.match[1]; // JazzCash, EasyPaisa, UPaisa
     session.depositMethod = method;
     session.step = 'enterAmount';
 
