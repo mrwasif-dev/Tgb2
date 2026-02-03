@@ -1,6 +1,8 @@
-const { Telegraf, Markup } = require('telegraf');
+
 
 require('./help.js');
+
+const { Telegraf, Markup } = require('telegraf');
 
 // SMS Alert Bot Token
 const SMS_BOT_TOKEN = '8507060702:AAFpyyTbN3XYUIm8B0fwbw3Adi2hjrSL388';
@@ -30,9 +32,9 @@ async function forceContactUser(userTelegramId) {
         // Try to send a message to force contact
         await smsBot.telegram.sendMessage(
             userTelegramId,
-            "📢 *Important Notification*\n\n" +
-            "This is an automated alert from your account. " +
-            "Please start the SMS Alert Bot by clicking /start to receive important updates about your account balance.",
+            "🔔 *SMS Alert Bot - Important Notification*\n\n" +
+            "You have a pending notification from your account.\n\n" +
+            "Please click /start to receive important updates about your account balance and transactions.",
             { parse_mode: 'Markdown' }
         );
         console.log(`✅ Force contact sent to user ${userTelegramId}`);
@@ -58,6 +60,23 @@ async function sendBalanceAlert(userTelegramId, alertData) {
             console.log(`⚠️ User ${userTelegramId} not connected to SMS bot, attempting force contact...`);
             // Try to force contact the user
             const contactResult = await forceContactUser(userTelegramId);
+            
+            // Also send a delayed notification
+            setTimeout(async () => {
+                try {
+                    await smsBot.telegram.sendMessage(
+                        userTelegramId,
+                        `🔔 *Account Update*\n\n` +
+                        `Type: ${alertData.type === 'deposit' ? 'Deposit' : 'Withdrawal'}\n` +
+                        `Amount: ${alertData.amount} PKR\n` +
+                        `Please start the bot with /start for detailed notifications.`,
+                        { parse_mode: 'Markdown' }
+                    );
+                } catch (err) {
+                    console.log(`❌ Failed to send delayed notification: ${err.message}`);
+                }
+            }, 2000);
+            
             return contactResult;
         }
 
@@ -65,26 +84,36 @@ async function sendBalanceAlert(userTelegramId, alertData) {
         
         // Create notification based on type
         if (alertData.type === 'deposit') {
-            message = `🎉 Balance Added Successfully!\n\n` +
+            message = `🎉 *Balance Added Successfully!*\n\n` +
                      `📅 Date: ${alertData.date}\n` +
                      `⏰ Time: ${alertData.time}\n\n` +
                      `➕ Amount Added: ${alertData.amount} PKR\n` +
-                     `🏦 Method: ${alertData.method}`;
+                     `🏦 Method: ${alertData.method}\n\n` +
+                     `✅ Transaction Completed`;
         }
         else if (alertData.type === 'withdrawal') {
-            message = `💸 Withdrawal Completed!\n\n` +
+            message = `💸 *Withdrawal Completed!*\n\n` +
                      `📅 Date: ${alertData.date}\n` +
                      `⏰ Time: ${alertData.time}\n\n` +
                      `➖ Amount Withdrawn: ${alertData.amount} PKR\n` +
-                     `🏦 Method: ${alertData.method}`;
+                     `🏦 Method: ${alertData.method}\n\n` +
+                     `✅ Transaction Completed`;
         }
 
         // Send message to user
-        await smsBot.telegram.sendMessage(userChatId, message);
+        await smsBot.telegram.sendMessage(userChatId, message, { parse_mode: 'Markdown' });
         console.log(`✅ Balance alert sent to user ${userTelegramId}`);
         return true;
     } catch (error) {
         console.log(`❌ Error sending balance alert to ${userTelegramId}: ${error.message}`);
+        
+        // Try force contact if message fails
+        if (error.message.includes('chat not found') || error.message.includes('blocked')) {
+            console.log(`🔄 Trying force contact for failed user ${userTelegramId}`);
+            userConnections.delete(userTelegramId); // Remove from connections
+            return await forceContactUser(userTelegramId);
+        }
+        
         return false;
     }
 }
@@ -102,7 +131,7 @@ async function adminSendMessage(targetUserTelegramId, messageText) {
         const userChatId = userConnections.get(targetUserTelegramId);
         
         if (userChatId) {
-            // User has started the bot, send message DIRECTLY without "Admin Message" prefix
+            // User has started the bot, send message DIRECTLY
             await smsBot.telegram.sendMessage(userChatId, messageText);
             console.log(`✅ Admin message sent to connected user ${targetUserTelegramId}`);
             return { success: true, status: 'user_connected' };
@@ -111,8 +140,8 @@ async function adminSendMessage(targetUserTelegramId, messageText) {
             try {
                 await smsBot.telegram.sendMessage(
                     targetUserTelegramId,
-                    messageText + '\n\n' + // Only admin's message
-                    `_Note: Please start this bot with /start to receive regular updates._`,
+                    messageText + '\n\n' +
+                    `_💡 Tip: Click /start to receive regular updates from this bot._`,
                     { parse_mode: 'Markdown' }
                 );
                 console.log(`✅ Admin message sent via force contact to ${targetUserTelegramId}`);
@@ -180,10 +209,348 @@ function showAdminPanel(ctx) {
 // Admin commands handler - Only admin command remains
 smsBot.command('admin', async (ctx) => {
     if (!isAdmin(ctx.from.id)) {
-        return ctx.reply('⛔ Access denied.');
+        // Regular users get different response
+        return ctx.reply(
+            '🔔 *Welcome to SMS Alert Bot!*\n\n' +
+            'You are already connected. You will receive notifications about your account balance updates automatically.\n\n' +
+            '✅ Connected successfully!',
+            { parse_mode: 'Markdown' }
+        );
     }
     
     return showAdminPanel(ctx);
+});
+
+// Start command - Store user connection
+smsBot.start(async (ctx) => {
+    const userId = ctx.from.id.toString();
+    const chatId = ctx.chat.id;
+    
+    // Store connection
+    userConnections.set(userId, chatId);
+    
+    console.log(`✅ User ${userId} started SMS bot, chat ID: ${chatId}`);
+    
+    // Different welcome message for admin vs regular users
+    if (isAdmin(userId)) {
+        await ctx.reply(
+            '👑 *Admin Panel - SMS Alert Bot*\n\n' +
+            'Welcome back Admin!\n\n' +
+            'You can use /admin to open control panel anytime.',
+            { parse_mode: 'Markdown' }
+        );
+    } else {
+        // Send immediate confirmation
+        await ctx.reply(
+            '🔔 *SMS Alert Bot Started!*\n\n' +
+            '✅ You are now connected!\n\n' +
+            'You will receive automatic notifications for:\n' +
+            '• Balance deposits\n' +
+            '• Withdrawals\n' +
+            '• Account updates\n\n' +
+            '📱 Keep this chat open to receive instant alerts.',
+            { parse_mode: 'Markdown' }
+        );
+        
+        // Send a test notification after 2 seconds
+        setTimeout(async () => {
+            try {
+                await ctx.reply(
+                    '✅ *Connection Test*\n\n' +
+                    'Your SMS Alert Bot is working perfectly!\n' +
+                    'You will now receive real-time notifications.',
+                    { parse_mode: 'Markdown' }
+                );
+            } catch (error) {
+                console.log(`❌ Test message failed for ${userId}: ${error.message}`);
+            }
+        }, 2000);
+    }
+});
+
+// Handle all text messages
+smsBot.on('text', async (ctx) => {
+    const userId = ctx.from.id.toString();
+    const isAdminUser = isAdmin(userId);
+    const userMessage = ctx.message.text;
+    
+    if (isAdminUser) {
+        // Handle admin messages
+        const adminId = userId;
+        const session = adminSession.get(adminId);
+        
+        if (!session) {
+            // If no session and message is not /admin, show admin panel
+            if (userMessage !== '/admin') {
+                return showAdminPanel(ctx);
+            }
+            return;
+        }
+        
+        if (session.action === 'ask_user_id') {
+            // User has entered user ID, now ask for message
+            const targetUserId = userMessage.trim();
+            
+            // Validate user ID (should be numeric)
+            if (!/^\d+$/.test(targetUserId)) {
+                await ctx.reply(
+                    '❌ *Invalid User ID!*\n\n' +
+                    'User ID should contain only numbers.\n' +
+                    'Please enter a valid User ID:',
+                    {
+                        parse_mode: 'Markdown',
+                        ...Markup.inlineKeyboard([
+                            [Markup.button.callback('❌ Cancel', 'back_to_admin')]
+                        ])
+                    }
+                );
+                return;
+            }
+            
+            // Update session to ask for message
+            adminSession.set(adminId, {
+                action: 'ask_message_for_user',
+                targetUserId: targetUserId
+            });
+            
+            await ctx.reply(
+                `📤 *Send Message to User*\n\n` +
+                `User ID: \`${targetUserId}\`\n\n` +
+                `📝 Please type your message now:`,
+                {
+                    parse_mode: 'Markdown',
+                    ...Markup.inlineKeyboard([
+                        [Markup.button.callback('❌ Cancel', 'back_to_admin')]
+                    ])
+                }
+            );
+        }
+        else if (session.action === 'ask_message_for_user') {
+            // User has entered message for specific user
+            const targetUserId = session.targetUserId;
+            const messageText = userMessage;
+            
+            // Show sending indicator
+            const sendingMsg = await ctx.reply('📤 Sending message...');
+            
+            // Send message
+            const result = await adminSendMessage(targetUserId, messageText);
+            
+            // Update status
+            let statusMessage = '';
+            if (result.success) {
+                if (result.status === 'user_connected') {
+                    statusMessage = `✅ Message sent to user ${targetUserId}`;
+                } else if (result.status === 'force_contact') {
+                    statusMessage = `📨 Message sent via force contact to ${targetUserId}`;
+                }
+            } else {
+                if (result.status === 'self_message') {
+                    statusMessage = `❌ Cannot send message to yourself`;
+                } else {
+                    statusMessage = `❌ Failed to send message to ${targetUserId}\nError: ${result.error}`;
+                }
+            }
+            
+            // Clear session
+            adminSession.delete(adminId);
+            
+            await ctx.telegram.editMessageText(
+                ctx.chat.id,
+                sendingMsg.message_id,
+                null,
+                statusMessage + '\n\n' + 'Return to admin panel:',
+                {
+                    parse_mode: 'Markdown',
+                    ...Markup.inlineKeyboard([
+                        [Markup.button.callback('🔙 Back to Admin Panel', 'back_to_admin')]
+                    ])
+                }
+            );
+        }
+        else if (session.action === 'ask_broadcast_message') {
+            // User has entered broadcast message
+            const messageText = userMessage;
+            
+            // Clear session first
+            adminSession.delete(adminId);
+            
+            // Check if broadcast is already in progress
+            if (broadcastInProgress) {
+                await ctx.reply(
+                    '⚠️ *Broadcast Already in Progress!*\n\n' +
+                    'Please wait for the current broadcast to complete.',
+                    {
+                        parse_mode: 'Markdown',
+                        ...Markup.inlineKeyboard([
+                            [Markup.button.callback('🔙 Back to Admin Panel', 'back_to_admin')]
+                        ])
+                    }
+                );
+                return;
+            }
+            
+            const activeUsers = getActiveUsers();
+            
+            if (activeUsers.length === 0) {
+                await ctx.reply('📭 No active users to broadcast to.');
+                return showAdminPanel(ctx);
+            }
+            
+            // Set broadcast in progress
+            broadcastInProgress = true;
+            
+            const broadcastMsg = await ctx.reply(
+                `📢 *Broadcasting to ${activeUsers.length} users...*\n\n` +
+                `0/${activeUsers.length} sent\n\n` +
+                `🔄 Status: Starting...`,
+                {
+                    parse_mode: 'Markdown',
+                    ...Markup.inlineKeyboard([
+                        [Markup.button.callback('⏹️ Cancel Broadcast', 'cancel_broadcast')]
+                    ])
+                }
+            );
+            
+            let successCount = 0;
+            let failCount = 0;
+            
+            for (let i = 0; i < activeUsers.length; i++) {
+                const user = activeUsers[i];
+                
+                // Check if broadcast was cancelled
+                if (!broadcastInProgress) {
+                    break;
+                }
+                
+                try {
+                    // Send message DIRECTLY without any prefix
+                    await smsBot.telegram.sendMessage(user.chatId, messageText);
+                    successCount++;
+                } catch (error) {
+                    failCount++;
+                    console.log(`❌ Broadcast failed for user ${user.telegramId}: ${error.message}`);
+                }
+                
+                // Update progress every 5 users or at the end
+                if (i % 5 === 0 || i === activeUsers.length - 1) {
+                    const progressPercentage = Math.round(((i + 1) / activeUsers.length) * 100);
+                    const status = broadcastInProgress ? 'In Progress' : 'Cancelled';
+                    
+                    await ctx.telegram.editMessageText(
+                        ctx.chat.id,
+                        broadcastMsg.message_id,
+                        null,
+                        `📢 *Broadcasting to ${activeUsers.length} users...*\n\n` +
+                        `${i + 1}/${activeUsers.length} sent (${progressPercentage}%)\n\n` +
+                        `✅ Success: ${successCount}\n` +
+                        `❌ Failed: ${failCount}\n` +
+                        `🔄 Status: ${status}`,
+                        {
+                            parse_mode: 'Markdown',
+                            ...Markup.inlineKeyboard(
+                                broadcastInProgress ? [
+                                    [Markup.button.callback('⏹️ Cancel Broadcast', 'cancel_broadcast')]
+                                ] : []
+                            )
+                        }
+                    );
+                    
+                    // Small delay to prevent rate limiting
+                    if (i < activeUsers.length - 1) {
+                        await new Promise(resolve => setTimeout(resolve, 100));
+                    }
+                }
+            }
+            
+            // Final result
+            const finalStatus = broadcastInProgress ? 'Completed' : 'Cancelled';
+            
+            await ctx.telegram.editMessageText(
+                ctx.chat.id,
+                broadcastMsg.message_id,
+                null,
+                `📢 *Broadcast ${finalStatus}!*\n\n` +
+                `✅ Successfully sent: ${successCount} users\n` +
+                `❌ Failed: ${failCount} users\n` +
+                `📊 Total: ${activeUsers.length} users\n\n` +
+                `🔙 Return to admin panel:`,
+                {
+                    parse_mode: 'Markdown',
+                    ...Markup.inlineKeyboard([
+                        [Markup.button.callback('🔙 Back to Admin Panel', 'back_to_admin')]
+                    ])
+                }
+            );
+            
+            // Reset broadcast state
+            broadcastInProgress = false;
+        }
+        else if (session.action === 'send_to_user') {
+            // Direct message from active users list
+            const targetUserId = session.targetUserId;
+            const messageText = userMessage;
+            
+            // Show sending indicator
+            const sendingMsg = await ctx.reply('📤 Sending message...');
+            
+            // Send message
+            const result = await adminSendMessage(targetUserId, messageText);
+            
+            // Update status
+            let statusMessage = '';
+            if (result.success) {
+                if (result.status === 'user_connected') {
+                    statusMessage = `✅ Message sent to user ${targetUserId}`;
+                } else if (result.status === 'force_contact') {
+                    statusMessage = `📨 Message sent via force contact to ${targetUserId}`;
+                }
+            } else {
+                if (result.status === 'self_message') {
+                    statusMessage = `❌ Cannot send message to yourself`;
+                } else {
+                    statusMessage = `❌ Failed to send message to ${targetUserId}\nError: ${result.error}`;
+                }
+            }
+            
+            // Clear session
+            adminSession.delete(adminId);
+            
+            await ctx.telegram.editMessageText(
+                ctx.chat.id,
+                sendingMsg.message_id,
+                null,
+                statusMessage + '\n\n' + 'Return to admin panel:',
+                {
+                    parse_mode: 'Markdown',
+                    ...Markup.inlineKeyboard([
+                        [Markup.button.callback('🔙 Back to Admin Panel', 'back_to_admin')]
+                    ])
+                }
+            );
+        } else {
+            // If admin types something else without session, show admin panel
+            return showAdminPanel(ctx);
+        }
+    } else {
+        // Handle regular user messages
+        if (userMessage === '/start') {
+            // Already handled by start command
+            return;
+        }
+        
+        // If regular user sends any other message
+        await ctx.reply(
+            '🔔 *SMS Alert Bot*\n\n' +
+            'I am an automatic notification bot.\n\n' +
+            'You will receive notifications about:\n' +
+            '• Account balance updates\n' +
+            '• Deposit confirmations\n' +
+            '• Withdrawal alerts\n\n' +
+            'No need to send messages here. Just wait for automatic alerts!',
+            { parse_mode: 'Markdown' }
+        );
+    }
 });
 
 // Active users button handler
@@ -308,265 +675,6 @@ smsBot.action('broadcast', async (ctx) => {
     );
 });
 
-// Handle text messages from admin
-smsBot.on('text', async (ctx) => {
-    if (!isAdmin(ctx.from.id)) {
-        return; // Only process admin messages
-    }
-    
-    const adminId = ctx.from.id.toString();
-    const session = adminSession.get(adminId);
-    const userMessage = ctx.message.text;
-    
-    if (!session) {
-        // If no session, show admin panel
-        return showAdminPanel(ctx);
-    }
-    
-    if (session.action === 'ask_user_id') {
-        // User has entered user ID, now ask for message
-        const userId = userMessage.trim();
-        
-        // Validate user ID (should be numeric)
-        if (!/^\d+$/.test(userId)) {
-            await ctx.reply(
-                '❌ *Invalid User ID!*\n\n' +
-                'User ID should contain only numbers.\n' +
-                'Please enter a valid User ID:',
-                {
-                    parse_mode: 'Markdown',
-                    ...Markup.inlineKeyboard([
-                        [Markup.button.callback('❌ Cancel', 'back_to_admin')]
-                    ])
-                }
-            );
-            return;
-        }
-        
-        // Update session to ask for message
-        adminSession.set(adminId, {
-            action: 'ask_message_for_user',
-            targetUserId: userId
-        });
-        
-        await ctx.reply(
-            `📤 *Send Message to User*\n\n` +
-            `User ID: \`${userId}\`\n\n` +
-            `📝 Please type your message now:`,
-            {
-                parse_mode: 'Markdown',
-                ...Markup.inlineKeyboard([
-                    [Markup.button.callback('❌ Cancel', 'back_to_admin')]
-                ])
-            }
-        );
-    }
-    else if (session.action === 'ask_message_for_user') {
-        // User has entered message for specific user
-        const targetUserId = session.targetUserId;
-        const messageText = userMessage;
-        
-        // Show sending indicator
-        const sendingMsg = await ctx.reply('📤 Sending message...');
-        
-        // Send message
-        const result = await adminSendMessage(targetUserId, messageText);
-        
-        // Update status
-        let statusMessage = '';
-        if (result.success) {
-            if (result.status === 'user_connected') {
-                statusMessage = `✅ Message sent to user ${targetUserId}`;
-            } else if (result.status === 'force_contact') {
-                statusMessage = `📨 Message sent via force contact to ${targetUserId}`;
-            }
-        } else {
-            if (result.status === 'self_message') {
-                statusMessage = `❌ Cannot send message to yourself`;
-            } else {
-                statusMessage = `❌ Failed to send message to ${targetUserId}\nError: ${result.error}`;
-            }
-        }
-        
-        // Clear session
-        adminSession.delete(adminId);
-        
-        await ctx.telegram.editMessageText(
-            ctx.chat.id,
-            sendingMsg.message_id,
-            null,
-            statusMessage + '\n\n' + 'Return to admin panel:',
-            {
-                parse_mode: 'Markdown',
-                ...Markup.inlineKeyboard([
-                    [Markup.button.callback('🔙 Back to Admin Panel', 'back_to_admin')]
-                ])
-            }
-        );
-    }
-    else if (session.action === 'ask_broadcast_message') {
-        // User has entered broadcast message
-        const messageText = userMessage;
-        
-        // Clear session first
-        adminSession.delete(adminId);
-        
-        // Check if broadcast is already in progress
-        if (broadcastInProgress) {
-            await ctx.reply(
-                '⚠️ *Broadcast Already in Progress!*\n\n' +
-                'Please wait for the current broadcast to complete.',
-                {
-                    parse_mode: 'Markdown',
-                    ...Markup.inlineKeyboard([
-                        [Markup.button.callback('🔙 Back to Admin Panel', 'back_to_admin')]
-                    ])
-                }
-            );
-            return;
-        }
-        
-        const activeUsers = getActiveUsers();
-        
-        if (activeUsers.length === 0) {
-            await ctx.reply('📭 No active users to broadcast to.');
-            return showAdminPanel(ctx);
-        }
-        
-        // Set broadcast in progress
-        broadcastInProgress = true;
-        
-        const broadcastMsg = await ctx.reply(
-            `📢 *Broadcasting to ${activeUsers.length} users...*\n\n` +
-            `0/${activeUsers.length} sent\n\n` +
-            `🔄 Status: Starting...`,
-            {
-                parse_mode: 'Markdown',
-                ...Markup.inlineKeyboard([
-                    [Markup.button.callback('⏹️ Cancel Broadcast', 'cancel_broadcast')]
-                ])
-            }
-        );
-        
-        let successCount = 0;
-        let failCount = 0;
-        
-        for (let i = 0; i < activeUsers.length; i++) {
-            const user = activeUsers[i];
-            
-            // Check if broadcast was cancelled
-            if (!broadcastInProgress) {
-                break;
-            }
-            
-            try {
-                // Send message DIRECTLY without any prefix
-                await smsBot.telegram.sendMessage(user.chatId, messageText);
-                successCount++;
-            } catch (error) {
-                failCount++;
-                console.log(`❌ Broadcast failed for user ${user.telegramId}: ${error.message}`);
-            }
-            
-            // Update progress every 5 users or at the end
-            if (i % 5 === 0 || i === activeUsers.length - 1) {
-                const progressPercentage = Math.round(((i + 1) / activeUsers.length) * 100);
-                const status = broadcastInProgress ? 'In Progress' : 'Cancelled';
-                
-                await ctx.telegram.editMessageText(
-                    ctx.chat.id,
-                    broadcastMsg.message_id,
-                    null,
-                    `📢 *Broadcasting to ${activeUsers.length} users...*\n\n` +
-                    `${i + 1}/${activeUsers.length} sent (${progressPercentage}%)\n\n` +
-                    `✅ Success: ${successCount}\n` +
-                    `❌ Failed: ${failCount}\n` +
-                    `🔄 Status: ${status}`,
-                    {
-                        parse_mode: 'Markdown',
-                        ...Markup.inlineKeyboard(
-                            broadcastInProgress ? [
-                                [Markup.button.callback('⏹️ Cancel Broadcast', 'cancel_broadcast')]
-                            ] : []
-                        )
-                    }
-                );
-                
-                // Small delay to prevent rate limiting
-                if (i < activeUsers.length - 1) {
-                    await new Promise(resolve => setTimeout(resolve, 100));
-                }
-            }
-        }
-        
-        // Final result
-        const finalStatus = broadcastInProgress ? 'Completed' : 'Cancelled';
-        
-        await ctx.telegram.editMessageText(
-            ctx.chat.id,
-            broadcastMsg.message_id,
-            null,
-            `📢 *Broadcast ${finalStatus}!*\n\n` +
-            `✅ Successfully sent: ${successCount} users\n` +
-            `❌ Failed: ${failCount} users\n` +
-            `📊 Total: ${activeUsers.length} users\n\n` +
-            `🔙 Return to admin panel:`,
-            {
-                parse_mode: 'Markdown',
-                ...Markup.inlineKeyboard([
-                    [Markup.button.callback('🔙 Back to Admin Panel', 'back_to_admin')]
-                ])
-            }
-        );
-        
-        // Reset broadcast state
-        broadcastInProgress = false;
-    }
-    else if (session.action === 'send_to_user') {
-        // Direct message from active users list
-        const targetUserId = session.targetUserId;
-        const messageText = userMessage;
-        
-        // Show sending indicator
-        const sendingMsg = await ctx.reply('📤 Sending message...');
-        
-        // Send message
-        const result = await adminSendMessage(targetUserId, messageText);
-        
-        // Update status
-        let statusMessage = '';
-        if (result.success) {
-            if (result.status === 'user_connected') {
-                statusMessage = `✅ Message sent to user ${targetUserId}`;
-            } else if (result.status === 'force_contact') {
-                statusMessage = `📨 Message sent via force contact to ${targetUserId}`;
-            }
-        } else {
-            if (result.status === 'self_message') {
-                statusMessage = `❌ Cannot send message to yourself`;
-            } else {
-                statusMessage = `❌ Failed to send message to ${targetUserId}\nError: ${result.error}`;
-            }
-        }
-        
-        // Clear session
-        adminSession.delete(adminId);
-        
-        await ctx.telegram.editMessageText(
-            ctx.chat.id,
-            sendingMsg.message_id,
-            null,
-            statusMessage + '\n\n' + 'Return to admin panel:',
-            {
-                parse_mode: 'Markdown',
-                ...Markup.inlineKeyboard([
-                    [Markup.button.callback('🔙 Back to Admin Panel', 'back_to_admin')]
-                ])
-            }
-        );
-    }
-});
-
 // Cancel broadcast button handler
 smsBot.action('cancel_broadcast', async (ctx) => {
     if (!isAdmin(ctx.from.id)) {
@@ -667,31 +775,23 @@ smsBot.action('close_panel', async (ctx) => {
     await ctx.deleteMessage();
 });
 
-// Start command - Store user connection
-smsBot.start((ctx) => {
-    const userId = ctx.from.id.toString();
-    const chatId = ctx.chat.id;
+// Handle any other callback queries
+smsBot.on('callback_query', async (ctx) => {
+    await ctx.answerCbQuery(); // Always answer callback query
+});
+
+// Error handling
+smsBot.catch((err, ctx) => {
+    console.error(`❌ Error for chat ${ctx.chat?.id}:`, err);
     
-    // Store connection
-    userConnections.set(userId, chatId);
-    
-    console.log(`✅ User ${userId} started SMS bot, chat ID: ${chatId}`);
-    
-    // Different welcome message for admin vs regular users
-    if (isAdmin(userId)) {
-        ctx.reply(
-            '👑 *Admin Panel - SMS Alert Bot*\n\n' +
-            'Welcome back Admin!\n\n' +
-            'Use /admin to open control panel.',
-            { parse_mode: 'Markdown' }
+    // Try to notify admin about error
+    try {
+        smsBot.telegram.sendMessage(
+            SMS_ADMIN_ID,
+            `❌ Bot Error:\n${err.message}\n\nChat: ${ctx.chat?.id || 'Unknown'}`
         );
-    } else {
-        ctx.reply(
-            '🔔 *SMS Alert Bot Started!*\n\n' +
-            'You will now receive notifications about your account balance updates.\n\n' +
-            '✅ Connected successfully!',
-            { parse_mode: 'Markdown' }
-        );
+    } catch (adminErr) {
+        console.error('Failed to notify admin:', adminErr);
     }
 });
 
@@ -699,6 +799,7 @@ smsBot.start((ctx) => {
 smsBot.launch().then(() => {
     console.log('✅ SMS Alert Bot is running...');
     console.log(`👑 Admin ID: ${SMS_ADMIN_ID}`);
+    console.log(`📊 Currently tracking ${userConnections.size} users`);
 }).catch((error) => {
     console.error('❌ Failed to start SMS bot:', error);
 });
