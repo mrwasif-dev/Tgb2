@@ -13,6 +13,12 @@ const userConnections = new Map();
 // Function to force contact user who hasn't started the bot
 async function forceContactUser(userTelegramId) {
     try {
+        // Skip if it's admin
+        if (userTelegramId === SMS_ADMIN_ID) {
+            console.log(`⚠️ Skipping force contact for admin ${userTelegramId}`);
+            return false;
+        }
+        
         // Try to send a message to force contact
         await smsBot.telegram.sendMessage(
             userTelegramId,
@@ -32,6 +38,12 @@ async function forceContactUser(userTelegramId) {
 // Function to send balance alerts (will be called from main bot)
 async function sendBalanceAlert(userTelegramId, alertData) {
     try {
+        // Skip if it's admin (admin doesn't need SMS alerts)
+        if (userTelegramId === SMS_ADMIN_ID) {
+            console.log(`⚠️ Skipping balance alert for admin ${userTelegramId}`);
+            return false;
+        }
+        
         const userChatId = userConnections.get(userTelegramId);
         
         if (!userChatId) {
@@ -72,6 +84,12 @@ async function sendBalanceAlert(userTelegramId, alertData) {
 // Function for admin to send message to any user
 async function adminSendMessage(targetUserTelegramId, messageText) {
     try {
+        // Don't allow admin to send message to himself via this function
+        if (targetUserTelegramId === SMS_ADMIN_ID) {
+            console.log(`⚠️ Admin ${SMS_ADMIN_ID} tried to send message to himself`);
+            return { success: false, status: 'self_message', error: 'Cannot send message to yourself via admin command' };
+        }
+        
         // Check if target user is in connections
         const userChatId = userConnections.get(targetUserTelegramId);
         
@@ -107,18 +125,26 @@ function getActiveUsers() {
     const activeUsers = [];
     
     userConnections.forEach((chatId, telegramId) => {
-        activeUsers.push({
-            telegramId: telegramId,
-            chatId: chatId
-        });
+        // Exclude admin from active users list
+        if (telegramId !== SMS_ADMIN_ID) {
+            activeUsers.push({
+                telegramId: telegramId,
+                chatId: chatId
+            });
+        }
     });
     
     return activeUsers;
 }
 
+// Function to check if user is admin
+function isAdmin(userId) {
+    return userId.toString() === SMS_ADMIN_ID;
+}
+
 // Admin commands handler
 smsBot.command('admin', async (ctx) => {
-    if (ctx.from.id.toString() !== SMS_ADMIN_ID) {
+    if (!isAdmin(ctx.from.id)) {
         return ctx.reply('⛔ Access denied.');
     }
     
@@ -140,7 +166,7 @@ smsBot.command('admin', async (ctx) => {
 
 // Active users command
 smsBot.command('active_users', async (ctx) => {
-    if (ctx.from.id.toString() !== SMS_ADMIN_ID) {
+    if (!isAdmin(ctx.from.id)) {
         return ctx.reply('⛔ Access denied.');
     }
     
@@ -162,7 +188,7 @@ smsBot.command('active_users', async (ctx) => {
 
 // Send message to specific user command
 smsBot.command('sendmsg', async (ctx) => {
-    if (ctx.from.id.toString() !== SMS_ADMIN_ID) {
+    if (!isAdmin(ctx.from.id)) {
         return ctx.reply('⛔ Access denied.');
     }
     
@@ -174,6 +200,11 @@ smsBot.command('sendmsg', async (ctx) => {
     
     const targetUserId = args[0];
     const messageText = args.slice(1).join(' ');
+    
+    // Check if admin is trying to message himself
+    if (targetUserId === ctx.from.id.toString()) {
+        return ctx.reply('❌ You cannot send message to yourself via this command.');
+    }
     
     // Show sending indicator
     const sendingMsg = await ctx.reply('📤 Sending message...');
@@ -190,7 +221,11 @@ smsBot.command('sendmsg', async (ctx) => {
             statusMessage = `📨 Message sent via force contact to ${targetUserId}`;
         }
     } else {
-        statusMessage = `❌ Failed to send message to ${targetUserId}\nError: ${result.error}`;
+        if (result.status === 'self_message') {
+            statusMessage = `❌ Cannot send message to yourself via admin command`;
+        } else {
+            statusMessage = `❌ Failed to send message to ${targetUserId}\nError: ${result.error}`;
+        }
     }
     
     await ctx.telegram.editMessageText(
@@ -203,7 +238,7 @@ smsBot.command('sendmsg', async (ctx) => {
 
 // Broadcast command
 smsBot.command('broadcast', async (ctx) => {
-    if (ctx.from.id.toString() !== SMS_ADMIN_ID) {
+    if (!isAdmin(ctx.from.id)) {
         return ctx.reply('⛔ Access denied.');
     }
     
@@ -268,20 +303,25 @@ smsBot.command('broadcast', async (ctx) => {
 
 // Stats command
 smsBot.command('stats', async (ctx) => {
-    if (ctx.from.id.toString() !== SMS_ADMIN_ID) {
+    if (!isAdmin(ctx.from.id)) {
         return ctx.reply('⛔ Access denied.');
     }
     
     const activeUsers = getActiveUsers();
+    const totalConnections = userConnections.size;
+    const adminConnections = userConnections.has(SMS_ADMIN_ID) ? 1 : 0;
+    const regularUsers = totalConnections - adminConnections;
     
     const statsMessage = `
 📊 *Bot Statistics:*
 
-👥 Active Users: ${activeUsers.length}
+👥 Total Connections: ${totalConnections}
+👤 Admin Connections: ${adminConnections}
+👤 Regular Users: ${regularUsers}
 🆔 Admin ID: ${SMS_ADMIN_ID}
 🤖 Bot Status: ✅ Running
 
-*Active Users List:*
+*Active Regular Users (${activeUsers.length}):*
 ${activeUsers.map((user, index) => `${index + 1}. User: ${user.telegramId}`).join('\n') || 'No active users'}
 `;
     
@@ -298,17 +338,28 @@ smsBot.start((ctx) => {
     
     console.log(`✅ User ${userId} started SMS bot, chat ID: ${chatId}`);
     
-    ctx.reply(
-        '🔔 *SMS Alert Bot Started!*\n\n' +
-        'You will now receive notifications about your account balance updates.\n\n' +
-        '✅ Connected successfully!',
-        { parse_mode: 'Markdown' }
-    );
+    // Different welcome message for admin vs regular users
+    if (isAdmin(userId)) {
+        ctx.reply(
+            '👑 *Admin Panel - SMS Alert Bot*\n\n' +
+            'Welcome back Admin!\n\n' +
+            'Use /admin to see available commands.',
+            { parse_mode: 'Markdown' }
+        );
+    } else {
+        ctx.reply(
+            '🔔 *SMS Alert Bot Started!*\n\n' +
+            'You will now receive notifications about your account balance updates.\n\n' +
+            '✅ Connected successfully!',
+            { parse_mode: 'Markdown' }
+        );
+    }
 });
 
 // Launch bot
 smsBot.launch().then(() => {
     console.log('✅ SMS Alert Bot is running...');
+    console.log(`👑 Admin ID: ${SMS_ADMIN_ID}`);
 }).catch((error) => {
     console.error('❌ Failed to start SMS bot:', error);
 });
@@ -319,5 +370,6 @@ module.exports = {
     adminSendMessage,
     getActiveUsers,
     forceContactUser,
-    userConnections
+    userConnections,
+    isAdmin
 };
