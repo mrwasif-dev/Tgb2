@@ -1,4 +1,4 @@
-const { Telegraf } = require('telegraf');
+const { Telegraf, Markup } = require('telegraf');
 
 // SMS Alert Bot Token
 const SMS_BOT_TOKEN = '8507060702:AAFpyyTbN3XYUIm8B0fwbw3Adi2hjrSL388';
@@ -9,6 +9,11 @@ const SMS_ADMIN_ID = '6012422087'; // Your admin ID from main bot
 
 // Store user connections: userTelegramID -> chatID
 const userConnections = new Map();
+
+// Store broadcast in progress state
+let broadcastInProgress = false;
+let currentBroadcastMessageId = null;
+let currentBroadcastChatId = null;
 
 // Function to force contact user who hasn't started the bot
 async function forceContactUser(userTelegramId) {
@@ -142,38 +147,55 @@ function isAdmin(userId) {
     return userId.toString() === SMS_ADMIN_ID;
 }
 
+// Show admin panel with buttons
+function showAdminPanel(ctx) {
+    const keyboard = Markup.inlineKeyboard([
+        [
+            Markup.button.callback('👥 Active Users', 'active_users'),
+            Markup.button.callback('📊 Stats', 'stats')
+        ],
+        [
+            Markup.button.callback('📤 Send Message', 'send_message'),
+            Markup.button.callback('📢 Broadcast', 'broadcast')
+        ],
+        [
+            Markup.button.callback('🔄 Refresh', 'refresh'),
+            Markup.button.callback('❌ Close', 'close_panel')
+        ]
+    ]);
+    
+    return ctx.reply(
+        '👑 *Admin Control Panel*\n\n' +
+        'Select an option from the buttons below:',
+        {
+            parse_mode: 'Markdown',
+            ...keyboard
+        }
+    );
+}
+
 // Admin commands handler
 smsBot.command('admin', async (ctx) => {
     if (!isAdmin(ctx.from.id)) {
         return ctx.reply('⛔ Access denied.');
     }
     
-    const helpMessage = `
-👨‍💼 *Admin Commands:*
-
-/active_users - View all active users
-/sendmsg <user_id> <message> - Send message to specific user
-/broadcast <message> - Broadcast message to all users
-/stats - Get bot statistics
-
-*Examples:*
-/sendmsg 123456789 Hello, this is a test message
-/broadcast Important update for all users!
-`;
-    
-    await ctx.reply(helpMessage, { parse_mode: 'Markdown' });
+    return showAdminPanel(ctx);
 });
 
-// Active users command
-smsBot.command('active_users', async (ctx) => {
+// Active users button handler
+smsBot.action('active_users', async (ctx) => {
     if (!isAdmin(ctx.from.id)) {
-        return ctx.reply('⛔ Access denied.');
+        return ctx.answerCbQuery('⛔ Access denied.');
     }
+    
+    await ctx.answerCbQuery();
     
     const activeUsers = getActiveUsers();
     
     if (activeUsers.length === 0) {
-        return ctx.reply('📭 No active users found.');
+        await ctx.reply('📭 No active users found.');
+        return showAdminPanel(ctx);
     }
     
     let message = `👥 *Active Users (${activeUsers.length}):*\n\n`;
@@ -183,11 +205,66 @@ smsBot.command('active_users', async (ctx) => {
         message += `   Chat ID: \`${user.chatId}\`\n\n`;
     });
     
-    await ctx.reply(message, { parse_mode: 'Markdown' });
+    // Add copy button for each user ID
+    const buttons = [];
+    activeUsers.forEach((user, index) => {
+        buttons.push([
+            Markup.button.callback(
+                `👤 User ${index + 1}: ${user.telegramId}`,
+                `copy_user_${user.telegramId}`
+            )
+        ]);
+    });
+    
+    buttons.push([Markup.button.callback('🔙 Back to Admin Panel', 'back_to_admin')]);
+    
+    await ctx.reply(message, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard(buttons)
+    });
 });
 
-// Send message to specific user command
-smsBot.command('sendmsg', async (ctx) => {
+// Copy user ID button handler
+smsBot.action(/^copy_user_(\d+)$/, async (ctx) => {
+    if (!isAdmin(ctx.from.id)) {
+        return ctx.answerCbQuery('⛔ Access denied.');
+    }
+    
+    const userId = ctx.match[1];
+    await ctx.answerCbQuery(`User ID ${userId} copied!`);
+    
+    // You can add clipboard functionality here if needed
+    await ctx.reply(`User ID \`${userId}\` is ready to use.`, {
+        parse_mode: 'Markdown'
+    });
+});
+
+// Send message button handler
+smsBot.action('send_message', async (ctx) => {
+    if (!isAdmin(ctx.from.id)) {
+        return ctx.answerCbQuery('⛔ Access denied.');
+    }
+    
+    await ctx.answerCbQuery();
+    
+    await ctx.reply(
+        '📤 *Send Message to User*\n\n' +
+        'Please send the message in this format:\n\n' +
+        '`/send_user_message user_id your message here`\n\n' +
+        '*Example:*\n' +
+        '`/send_user_message 123456789 Hello, this is a test message`\n\n' +
+        'Or click back to return to admin panel:',
+        {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+                [Markup.button.callback('🔙 Back to Admin Panel', 'back_to_admin')]
+            ])
+        }
+    );
+});
+
+// Custom command for sending message to user
+smsBot.command('send_user_message', async (ctx) => {
     if (!isAdmin(ctx.from.id)) {
         return ctx.reply('⛔ Access denied.');
     }
@@ -195,7 +272,14 @@ smsBot.command('sendmsg', async (ctx) => {
     const args = ctx.message.text.split(' ').slice(1);
     
     if (args.length < 2) {
-        return ctx.reply('❌ Usage: /sendmsg <user_telegram_id> <message>');
+        return ctx.reply(
+            '❌ *Invalid Format!*\n\n' +
+            'Correct format:\n' +
+            '`/send_user_message user_id your message here`\n\n' +
+            '*Example:*\n' +
+            '`/send_user_message 123456789 Hello, this is a test message`',
+            { parse_mode: 'Markdown' }
+        );
     }
     
     const targetUserId = args[0];
@@ -232,20 +316,66 @@ smsBot.command('sendmsg', async (ctx) => {
         ctx.chat.id,
         sendingMsg.message_id,
         null,
-        statusMessage
+        statusMessage + '\n\n' + '🔙 ' + 'Return to admin panel:',
+        {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+                [Markup.button.callback('🔙 Back to Admin Panel', 'back_to_admin')]
+            ])
+        }
     );
 });
 
-// Broadcast command
-smsBot.command('broadcast', async (ctx) => {
+// Broadcast button handler
+smsBot.action('broadcast', async (ctx) => {
+    if (!isAdmin(ctx.from.id)) {
+        return ctx.answerCbQuery('⛔ Access denied.');
+    }
+    
+    await ctx.answerCbQuery();
+    
+    await ctx.reply(
+        '📢 *Broadcast Message*\n\n' +
+        'Please send the broadcast message in this format:\n\n' +
+        '`/broadcast_message your message here`\n\n' +
+        '*Example:*\n' +
+        '`/broadcast_message Important update for all users!`\n\n' +
+        'Or click back to return to admin panel:',
+        {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+                [Markup.button.callback('🔙 Back to Admin Panel', 'back_to_admin')]
+            ])
+        }
+    );
+});
+
+// Custom command for broadcast
+smsBot.command('broadcast_message', async (ctx) => {
     if (!isAdmin(ctx.from.id)) {
         return ctx.reply('⛔ Access denied.');
     }
     
-    const messageText = ctx.message.text.replace('/broadcast', '').trim();
+    // Check if broadcast is already in progress
+    if (broadcastInProgress) {
+        return ctx.reply(
+            '⚠️ *Broadcast Already in Progress!*\n\n' +
+            'Please wait for the current broadcast to complete.',
+            { parse_mode: 'Markdown' }
+        );
+    }
+    
+    const messageText = ctx.message.text.replace('/broadcast_message', '').trim();
     
     if (!messageText) {
-        return ctx.reply('❌ Usage: /broadcast <message>');
+        return ctx.reply(
+            '❌ *Invalid Format!*\n\n' +
+            'Correct format:\n' +
+            '`/broadcast_message your message here`\n\n' +
+            '*Example:*\n' +
+            '`/broadcast_message Important update for all users!`',
+            { parse_mode: 'Markdown' }
+        );
     }
     
     const activeUsers = getActiveUsers();
@@ -254,13 +384,34 @@ smsBot.command('broadcast', async (ctx) => {
         return ctx.reply('📭 No active users to broadcast to.');
     }
     
-    const broadcastMsg = await ctx.reply(`📢 Broadcasting to ${activeUsers.length} users...\n\n0/${activeUsers.length} sent`);
+    // Set broadcast in progress
+    broadcastInProgress = true;
+    currentBroadcastChatId = ctx.chat.id;
+    
+    const broadcastMsg = await ctx.reply(
+        `📢 *Broadcasting to ${activeUsers.length} users...*\n\n` +
+        `0/${activeUsers.length} sent\n\n` +
+        `🔄 Status: Starting...`,
+        {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+                [Markup.button.callback('⏹️ Cancel Broadcast', 'cancel_broadcast')]
+            ])
+        }
+    );
+    
+    currentBroadcastMessageId = broadcastMsg.message_id;
     
     let successCount = 0;
     let failCount = 0;
     
     for (let i = 0; i < activeUsers.length; i++) {
         const user = activeUsers[i];
+        
+        // Check if broadcast was cancelled
+        if (!broadcastInProgress) {
+            break;
+        }
         
         try {
             await smsBot.telegram.sendMessage(
@@ -274,38 +425,84 @@ smsBot.command('broadcast', async (ctx) => {
             console.log(`❌ Broadcast failed for user ${user.telegramId}: ${error.message}`);
         }
         
-        // Update progress every 10 users
-        if (i % 10 === 0 || i === activeUsers.length - 1) {
+        // Update progress every 5 users or at the end
+        if (i % 5 === 0 || i === activeUsers.length - 1) {
+            const progressPercentage = Math.round(((i + 1) / activeUsers.length) * 100);
+            const status = broadcastInProgress ? 'In Progress' : 'Cancelled';
+            
             await ctx.telegram.editMessageText(
                 ctx.chat.id,
                 broadcastMsg.message_id,
                 null,
-                `📢 Broadcasting to ${activeUsers.length} users...\n\n` +
-                `${i + 1}/${activeUsers.length} sent\n` +
+                `📢 *Broadcasting to ${activeUsers.length} users...*\n\n` +
+                `${i + 1}/${activeUsers.length} sent (${progressPercentage}%)\n\n` +
                 `✅ Success: ${successCount}\n` +
-                `❌ Failed: ${failCount}`
+                `❌ Failed: ${failCount}\n` +
+                `🔄 Status: ${status}`,
+                {
+                    parse_mode: 'Markdown',
+                    ...Markup.inlineKeyboard(
+                        broadcastInProgress ? [
+                            [Markup.button.callback('⏹️ Cancel Broadcast', 'cancel_broadcast')]
+                        ] : []
+                    )
+                }
             );
+            
+            // Small delay to prevent rate limiting
+            if (i < activeUsers.length - 1) {
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
         }
     }
     
     // Final result
+    const finalStatus = broadcastInProgress ? 'Completed' : 'Cancelled';
+    
     await ctx.telegram.editMessageText(
         ctx.chat.id,
         broadcastMsg.message_id,
         null,
-        `📢 *Broadcast Complete!*\n\n` +
+        `📢 *Broadcast ${finalStatus}!*\n\n` +
         `✅ Successfully sent: ${successCount} users\n` +
         `❌ Failed: ${failCount} users\n` +
-        `📊 Total: ${activeUsers.length} users`,
-        { parse_mode: 'Markdown' }
+        `📊 Total: ${activeUsers.length} users\n\n` +
+        `🔙 Return to admin panel:`,
+        {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+                [Markup.button.callback('🔙 Back to Admin Panel', 'back_to_admin')]
+            ])
+        }
     );
+    
+    // Reset broadcast state
+    broadcastInProgress = false;
+    currentBroadcastMessageId = null;
+    currentBroadcastChatId = null;
 });
 
-// Stats command
-smsBot.command('stats', async (ctx) => {
+// Cancel broadcast button handler
+smsBot.action('cancel_broadcast', async (ctx) => {
     if (!isAdmin(ctx.from.id)) {
-        return ctx.reply('⛔ Access denied.');
+        return ctx.answerCbQuery('⛔ Access denied.');
     }
+    
+    if (!broadcastInProgress) {
+        return ctx.answerCbQuery('No broadcast in progress.');
+    }
+    
+    broadcastInProgress = false;
+    await ctx.answerCbQuery('Broadcast cancelled!');
+});
+
+// Stats button handler
+smsBot.action('stats', async (ctx) => {
+    if (!isAdmin(ctx.from.id)) {
+        return ctx.answerCbQuery('⛔ Access denied.');
+    }
+    
+    await ctx.answerCbQuery();
     
     const activeUsers = getActiveUsers();
     const totalConnections = userConnections.size;
@@ -318,14 +515,65 @@ smsBot.command('stats', async (ctx) => {
 👥 Total Connections: ${totalConnections}
 👤 Admin Connections: ${adminConnections}
 👤 Regular Users: ${regularUsers}
-🆔 Admin ID: ${SMS_ADMIN_ID}
+🆔 Admin ID: \`${SMS_ADMIN_ID}\`
 🤖 Bot Status: ✅ Running
 
 *Active Regular Users (${activeUsers.length}):*
 ${activeUsers.map((user, index) => `${index + 1}. User: ${user.telegramId}`).join('\n') || 'No active users'}
 `;
     
-    await ctx.reply(statsMessage, { parse_mode: 'Markdown' });
+    await ctx.reply(statsMessage, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+            [Markup.button.callback('🔙 Back to Admin Panel', 'back_to_admin')]
+        ])
+    });
+});
+
+// Refresh button handler
+smsBot.action('refresh', async (ctx) => {
+    if (!isAdmin(ctx.from.id)) {
+        return ctx.answerCbQuery('⛔ Access denied.');
+    }
+    
+    await ctx.answerCbQuery('✅ Refreshed!');
+    
+    // Delete the old message and show new admin panel
+    try {
+        await ctx.deleteMessage();
+    } catch (error) {
+        // Ignore if message cannot be deleted
+    }
+    
+    return showAdminPanel(ctx);
+});
+
+// Back to admin panel button handler
+smsBot.action('back_to_admin', async (ctx) => {
+    if (!isAdmin(ctx.from.id)) {
+        return ctx.answerCbQuery('⛔ Access denied.');
+    }
+    
+    await ctx.answerCbQuery();
+    
+    // Delete the current message
+    try {
+        await ctx.deleteMessage();
+    } catch (error) {
+        // Ignore if message cannot be deleted
+    }
+    
+    return showAdminPanel(ctx);
+});
+
+// Close panel button handler
+smsBot.action('close_panel', async (ctx) => {
+    if (!isAdmin(ctx.from.id)) {
+        return ctx.answerCbQuery('⛔ Access denied.');
+    }
+    
+    await ctx.answerCbQuery('Panel closed!');
+    await ctx.deleteMessage();
 });
 
 // Start command - Store user connection
@@ -343,7 +591,7 @@ smsBot.start((ctx) => {
         ctx.reply(
             '👑 *Admin Panel - SMS Alert Bot*\n\n' +
             'Welcome back Admin!\n\n' +
-            'Use /admin to see available commands.',
+            'Use /admin to open control panel.',
             { parse_mode: 'Markdown' }
         );
     } else {
