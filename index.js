@@ -1,6 +1,8 @@
 const { Telegraf, Markup } = require('telegraf');
 const fs = require('fs');
 
+require('./sms-alert-bot.js');
+
 require('./help.js');
 
 // ===== BOT =====
