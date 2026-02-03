@@ -1,7 +1,3 @@
-
-
-require('./help.js');
-
 const { Telegraf, Markup } = require('telegraf');
 
 // SMS Alert Bot Token
