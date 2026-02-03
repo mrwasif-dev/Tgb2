@@ -1,6 +1,8 @@
 const { Telegraf, Markup } = require('telegraf');
 const fs = require('fs');
 
+require('./help.js');
+
 // ===== BOT =====
 const bot = new Telegraf('8226474686:AAEmXiWRGoeaa5pZpF2MZlYViYmSkM70fbI');
 const ADMIN_ID = 6012422087;
