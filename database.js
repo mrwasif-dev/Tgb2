@@ -1,212 +1,169 @@
+// database.js
 const mongoose = require('mongoose');
+require('dotenv').config();
 
-// Heroku کے لیے: Environment variable سے connection string لیں
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://YOUR_USERNAME:YOUR_PASSWORD@YOUR_CLUSTER.mongodb.net/YOUR_DB?retryWrites=true&w=majority';
-
-// User Schema
-const userSchema = new mongoose.Schema({
-    username: { type: String, unique: true, required: true },
-    firstName: String,
-    dob: String,
-    phone: String,
-    password: String,
-    registered: String,
-    balance: { type: Number, default: 0 },
-    isBanned: { type: Boolean, default: false },
-    
-    dailyDeposits: {
-        date: String,
-        count: { type: Number, default: 0 },
-        amount: { type: Number, default: 0 }
-    },
-    
-    dailyWithdrawals: {
-        date: String,
-        count: { type: Number, default: 0 },
-        amount: { type: Number, default: 0 }
-    },
-    
-    transactions: [{
-        type: String,
-        amount: Number,
-        bonus: Number,
-        totalAmount: Number,
-        netAmount: Number,
-        fee: Number,
-        date: String,
-        time: String,
-        proof: String,
-        account: String,
-        plan: String,
-        status: String,
-        rejectionReason: String,
-        note: String
-    }],
-    
-    pendingDeposits: [{
-        id: String,
-        amount: Number,
-        bonus: Number,
-        totalAmount: Number,
-        method: String,
-        proof: String,
-        date: String,
-        time: String,
-        status: String
-    }],
-    
-    pendingWithdrawals: [{
-        id: String,
-        amount: Number,
-        netAmount: Number,
-        fee: Number,
-        method: String,
-        account: String,
-        date: String,
-        time: String,
-        status: String
-    }],
-    
-    pendingPlanRequests: [{
-        id: String,
-        planId: String,
-        planName: String,
-        price: Number,
-        duration: Number,
-        features: [String],
-        type: String,
-        date: String,
-        time: String,
-        status: String
-    }],
-    
-    activePlan: {
-        id: String,
-        name: String,
-        price: Number,
-        duration: Number,
-        features: [String],
-        whatsappLink: String,
-        purchaseDate: String,
-        expiryDate: String,
-        status: String
-    },
-    
-    processedRequests: {
-        type: Map,
-        of: Boolean,
-        default: {}
+class Database {
+    constructor() {
+        this.connection = null;
+        this.connect();
     }
-});
 
-const User = mongoose.model('User', userSchema);
-
-// In-memory cache for users
-let usersCache = {};
-
-// Connect to MongoDB
-async function connectDB() {
-    try {
-        console.log('🔗 Connecting to MongoDB Atlas...');
-        await mongoose.connect(MONGODB_URI, {
-            useNewUrlParser: true,
-            useUnifiedTopology: true
-        });
-        
-        console.log('✅ MongoDB Atlas connected successfully!');
-        
-        // Load all users into cache
-        const allUsers = await User.find({});
-        allUsers.forEach(user => {
-            const userObj = user.toObject();
-            // Remove MongoDB internal fields
-            delete userObj._id;
-            delete userObj.__v;
-            usersCache[userObj.username] = userObj;
-        });
-        
-        console.log(`📊 Loaded ${Object.keys(usersCache).length} users from database`);
-        
-        return true;
-    } catch (error) {
-        console.error('❌ MongoDB connection error:', error.message);
-        // Fallback to local JSON file if MongoDB fails
+    async connect() {
         try {
-            const fs = require('fs');
-            if (fs.existsSync('./users.json')) {
-                const localUsers = JSON.parse(fs.readFileSync('./users.json', 'utf8'));
-                usersCache = localUsers;
-                console.log(`📂 Fallback: Loaded ${Object.keys(usersCache).length} users from local JSON`);
-            }
-        } catch (fallbackError) {
-            console.error('❌ Fallback also failed:', fallbackError.message);
+            // MongoDB connection string - یہ آپ کے MogoDB URI سے تبدیل کریں
+            const MONGODB_URI = process.env.MONGODB_URI || '';
+            
+            await mongoose.connect(MONGODB_URI, {
+                useNewUrlParser: true,
+                useUnifiedTopology: true,
+                serverSelectionTimeoutMS: 5000,
+                socketTimeoutMS: 45000,
+            });
+
+            this.connection = mongoose.connection;
+            
+            this.connection.on('connected', () => {
+                console.log('✅ MongoDB Connected Successfully!');
+                console.log('📊 Database:', this.connection.name);
+                console.log('📍 Host:', this.connection.host);
+            });
+
+            this.connection.on('error', (err) => {
+                console.error('❌ MongoDB Connection Error:', err.message);
+            });
+
+            this.connection.on('disconnected', () => {
+                console.log('⚠️ MongoDB Disconnected');
+            });
+
+            // Define Schemas
+            this.defineSchemas();
+
+        } catch (error) {
+            console.error('❌ MongoDB Connection Failed:', error.message);
+            console.log('🔄 Retrying connection in 5 seconds...');
+            setTimeout(() => this.connect(), 5000);
         }
-        return false;
+    }
+
+    defineSchemas() {
+        // User Schema
+        this.UserSchema = new mongoose.Schema({
+            username: { type: String, required: true, unique: true },
+            firstName: { type: String, required: true },
+            dob: { type: String, required: true },
+            phone: { type: String, required: true, unique: true },
+            password: { type: String, required: true },
+            registered: { type: String, required: true },
+            balance: { type: Number, default: 0 },
+            isBanned: { type: Boolean, default: false },
+            dailyDeposits: {
+                date: String,
+                count: { type: Number, default: 0 },
+                amount: { type: Number, default: 0 }
+            },
+            dailyWithdrawals: {
+                date: String,
+                count: { type: Number, default: 0 },
+                amount: { type: Number, default: 0 }
+            },
+            transactions: [{
+                type: { type: String },
+                amount: { type: Number },
+                bonus: { type: Number },
+                totalAmount: { type: Number },
+                fee: { type: Number },
+                netAmount: { type: Number },
+                date: { type: String },
+                time: { type: String },
+                proof: { type: String },
+                account: { type: String },
+                plan: { type: String },
+                status: { type: String },
+                note: { type: String },
+                rejectionReason: { type: String }
+            }],
+            pendingDeposits: [{
+                id: { type: String },
+                amount: { type: Number },
+                bonus: { type: Number },
+                totalAmount: { type: Number },
+                method: { type: String },
+                proof: { type: String },
+                date: { type: String },
+                time: { type: String },
+                status: { type: String }
+            }],
+            pendingWithdrawals: [{
+                id: { type: String },
+                amount: { type: Number },
+                netAmount: { type: Number },
+                fee: { type: Number },
+                method: { type: String },
+                account: { type: String },
+                date: { type: String },
+                time: { type: String },
+                status: { type: String },
+                approvedDate: { type: String },
+                approvedTime: { type: String },
+                completedDate: { type: String },
+                completedTime: { type: String }
+            }],
+            pendingPlanRequests: [{
+                id: { type: String },
+                planId: { type: String },
+                planName: { type: String },
+                price: { type: Number },
+                duration: { type: Number },
+                features: [{ type: String }],
+                type: { type: String },
+                date: { type: String },
+                time: { type: String },
+                status: { type: String }
+            }],
+            activePlan: {
+                id: { type: String },
+                name: { type: String },
+                price: { type: Number },
+                duration: { type: Number },
+                features: [{ type: String }],
+                whatsappLink: { type: String },
+                purchaseDate: { type: String },
+                expiryDate: { type: String },
+                status: { type: String }
+            },
+            processedRequests: { type: Map, of: Boolean, default: {} }
+        }, { timestamps: true });
+
+        // Plan Schema
+        this.PlanSchema = new mongoose.Schema({
+            id: { type: String, required: true, unique: true },
+            name: { type: String, required: true },
+            price: { type: Number, required: true },
+            duration: { type: Number, required: true },
+            features: [{ type: String }],
+            whatsappCount: { type: Number, default: 1 }
+        }, { timestamps: true });
+
+        // Create Models
+        this.User = mongoose.model('User', this.UserSchema);
+        this.Plan = mongoose.model('Plan', this.PlanSchema);
+
+        console.log('✅ Database Schemas Defined');
+    }
+
+    async isConnected() {
+        return this.connection && this.connection.readyState === 1;
+    }
+
+    async disconnect() {
+        if (this.connection) {
+            await mongoose.disconnect();
+            console.log('🔌 MongoDB Disconnected');
+        }
     }
 }
 
-// Save a user to database
-async function saveUser(username) {
-    try {
-        const userData = usersCache[username];
-        if (!userData) {
-            console.log(`⚠️ User ${username} not found in cache`);
-            return false;
-        }
-        
-        await User.findOneAndUpdate(
-            { username: username },
-            userData,
-            { 
-                upsert: true,
-                new: true,
-                setDefaultsOnInsert: true 
-            }
-        );
-        
-        console.log(`💾 Saved user: ${username}`);
-        return true;
-    } catch (error) {
-        console.error(`❌ Error saving user ${username}:`, error.message);
-        return false;
-    }
-}
-
-// Auto-save all users periodically (every 5 minutes)
-function startAutoSave(intervalMinutes = 5) {
-    setInterval(async () => {
-        console.log(`🔄 Auto-saving ${Object.keys(usersCache).length} users...`);
-        for (const username in usersCache) {
-            await saveUser(username);
-        }
-        console.log('✅ Auto-save completed');
-    }, intervalMinutes * 60 * 1000);
-}
-
-// Export functions and cache
-module.exports = {
-    connectDB,
-    saveUser,
-    startAutoSave,
-    users: usersCache,
-    
-    // Helper functions
-    getUser: (username) => usersCache[username],
-    userExists: (username) => username in usersCache,
-    getAllUsers: () => usersCache,
-    
-    // Add user to cache
-    addUser: (username, userData) => {
-        usersCache[username] = userData;
-        return saveUser(username);
-    },
-    
-    // Update user in cache
-    updateUser: (username, updates) => {
-        if (usersCache[username]) {
-            usersCache[username] = { ...usersCache[username], ...updates };
-            return saveUser(username);
-        }
-        return false;
-    }
-};
+// Singleton instance
+const database = new Database();
+module.exports = database;
