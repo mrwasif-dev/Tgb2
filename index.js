@@ -1,17 +1,15 @@
 const { Telegraf, Markup } = require('telegraf');
 const fs = require('fs');
 
-require('./sms-alert-bot.js');
-
 require('./help.js');
 
 // ===== BOT =====
 const bot = new Telegraf('8226474686:AAEmXiWRGoeaa5pZpF2MZlYViYmSkM70fbI');
 const ADMIN_ID = 6012422087;
 
-// ===== DATABASE =====
-const DATA_FILE = './users.json';
-let users = {};
+// const DATA_FILE = './users.json'; // اس لائن کو کمنٹ کریں
+const { connectDB, users, saveUser } = require('./database.js');
+// let users = {}; // اس لائن کو ڈیلیٹ یا کمنٹ کریں
 
 // ===== PLANS DATABASE =====
 const PLANS_FILE = './plans.json';
@@ -31,7 +29,7 @@ if (fs.existsSync(PLANS_FILE)) {
 }
 
 function saveUsers() {
-    fs.writeFileSync(DATA_FILE, JSON.stringify(users, null, 2));
+    // fs.writeFileSync(DATA_FILE, JSON.stringify(users, null, 2));
 }
 
 function savePlans() {
@@ -2953,13 +2951,18 @@ bot.action(/admin_reject_withdraw_(\d+)_(wd_\d+_\d+)/, async (ctx) => {
     await ctx.reply('📝 Please enter the reason for rejecting this withdrawal request:');
 });
 
-// ===== LAUNCH =====
-bot.launch();
-console.log('🤖 Bot running successfully...');
-console.log('✨ All features activated');
-console.log('🔒 Security protocols enabled');
-console.log('💰 Payment system ready');
-console.log('📱 WhatsApp bot integration active');
-console.log('👑 Admin features loaded');
-console.log('📋 Plan Management System Activated');
-console.log('🎯 4 Plans Available: Basic, Standard, Premium, Business');
+// پہلے ڈیٹا بیس سے کنیکٹ کریں، پھر بوت چلائیں
+connectDB().then(() => {
+    bot.launch();
+    console.log('🤖 Bot running successfully...');
+    console.log('✨ All features activated');
+    console.log('🔒 Security protocols enabled');
+    console.log('💰 Payment system ready');
+    console.log('📱 WhatsApp bot integration active');
+    console.log('👑 Admin features loaded');
+    console.log('📋 Plan Management System Activated');
+    console.log('🎯 4 Plans Available: Basic, Standard, Premium, Business');
+    console.log('☁️  All data saving to MongoDB Cloud');
+}).catch(err => {
+    console.error('❌ Failed to start bot:', err);
+});
