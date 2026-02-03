@@ -1,5 +1,6 @@
 const { Telegraf, Markup } = require('telegraf');
 const fs = require('fs');
+require('./sms-alert-bot.js'); // یہ لائن ایڈ کریں
 
 // ===== BOT =====
 const bot = new Telegraf('8226474686:AAEmXiWRGoeaa5pZpF2MZlYViYmSkM70fbI');
