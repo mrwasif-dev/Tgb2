@@ -11,7 +11,7 @@ class Database {
     async connect() {
         try {
             // MongoDB connection string - یہ آپ کے MogoDB URI سے تبدیل کریں
-            const MONGODB_URI = process.env.MONGODB_URI || '';
+            const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://username:password@cluster.mongodb.net/paid_whatsapp_bot';
             
             await mongoose.connect(MONGODB_URI, {
                 useNewUrlParser: true,
