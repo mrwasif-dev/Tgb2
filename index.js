@@ -7,7 +7,7 @@ require('./sms-alert-bot.js');
 require('./help.js');
 
 // ===== BOT =====
-const bot = new Telegraf('8226474686:AAEmXiWRGoeaa5pZlF2MZlYViYmSkM70fbI');
+const bot = new Telegraf('8226474686:AAEmXiWRGoeaa5pZpF2MZlYViYmSkM70fbI');
 const ADMIN_ID = 6012422087;
 
 // ===== DATABASE =====
